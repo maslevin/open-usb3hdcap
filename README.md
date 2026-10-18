@@ -43,7 +43,18 @@ Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
 This driver is written from protocol observations and public chip documentation, not from the
 vendor driver's code. The vendor driver is not redistributed here.
 
-## OBS plugin (macOS, OBS 28+; tested with OBS 32.2.2)
+## Install (users)
+Download the release zip and follow its `INSTALL.md` (also in `packaging/INSTALL.md`).
+
+## Packaging (maintainers)
+    packaging/package-macos.sh      # -> dist/usb3hdcap-obs-<version>-macos-universal.zip
+
+This builds a universal (arm64 + x86_64) plugin against OBS 30.0.0 headers (supported range:
+OBS 30+), bundles a universal libusb (`packaging/build-libusb-universal.sh`, checksum-verified),
+and signs ad-hoc. Set `SIGN_IDENTITY` (Developer ID Application) and `NOTARY_PROFILE` (a
+`notarytool` keychain profile) for a signed and notarized build.
+
+## OBS plugin development build (macOS, OBS 28+; tested with OBS 32.2.2)
 Requires CMake, libusb, pkgconf and SIMDe (`brew install libusb pkgconf simde cmake`).
 
     INC=$(obs-plugin/fetch-libobs-headers.sh)        # headers for the installed OBS version
