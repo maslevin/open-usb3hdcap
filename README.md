@@ -4,10 +4,10 @@ An open-source, user-space driver for the **StarTech USB3HDCAP** USB 3.0 capture
 (YUAN UB-530 design, USB ID `1164:F533`): HDMI, DVI, VGA, Component, Composite and S-Video,
 with stereo audio.
 
-Status: **early bring-up.** On macOS the device opens, accepts its control protocol and
-streams over isochronous USB. The stream demuxer has been validated on captured data
-(VGA 640×480, HDMI 1280×720, NTSC 480i). Live video is not yet working: the HDMI
-post-lock configuration is still being worked out.
+Status: **early bring-up, first live capture working.** On macOS (Intel, 15.8) the tool captures
+**HDMI 1280×720 at 60 fps with 48 kHz stereo audio** (115.7 MB/s, no packet errors), driven by a
+replayed startup sequence. The demuxer has also been validated offline on VGA 640×480 and NTSC 480i
+captures. Next: replace replayed sequences with real input/mode handling, then the OBS plugin.
 
 ## Layout
 | Path | Contents |
@@ -23,7 +23,7 @@ post-lock configuration is still being worked out.
 Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
 
     make
-    ./hdcap-capture -s sequences/open.seq -s sequences/select_hdmi.seq -t 5 -n 3 -o out
+    ./hdcap-capture -s sequences/open_hdmi.seq -t 5 -n 3 -o out   # HDMI source connected
 
 ## Clean-room note
 This driver is written from protocol observations and public chip documentation, not from the
