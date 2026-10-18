@@ -6,39 +6,17 @@
  * format the client selected; black filler frames keep the stream running without a signal.
  * The device is linked to the HAL plug-in's audio device so apps can pair picture and sound.
  */
+#import "CameraExtension.h"
 #import "HDCapFrameSource.h"
-#import <CoreMediaIO/CMIOExtension.h>
 #import <CoreAudio/AudioHardware.h>
-#import <os/log.h>
 
 #define HAL_DEVICE_UID @"org.open-usb3hdcap.hal.device"
 
-static os_log_t g_log;
-
-typedef struct { int w, h, fps; } CamMode;
-static const CamMode kModes[] = {
+const CamMode kCamModes[] = {
     { 1920, 1080, 60 }, { 1920, 1080, 30 }, { 1280, 720, 60 }, { 1280, 720, 30 }, { 640, 480, 60 }, { 640, 480, 30 },
 };
-#define MODE_COUNT (sizeof kModes / sizeof kModes[0])
-
-@class CamStreamSource;
-
-@interface CamDeviceSource : NSObject <CMIOExtensionDeviceSource>
-@property (nonatomic, strong) CMIOExtensionDevice *device;
-@property (nonatomic, strong) CamStreamSource *streamSource;
-- (instancetype)initWithLocalizedName:(NSString *)name;
-@end
-
-@interface CamStreamSource : NSObject <CMIOExtensionStreamSource>
-@property (nonatomic, strong) CMIOExtensionStream *stream;
-@property (nonatomic, weak) CamDeviceSource *deviceSource;
-@property (nonatomic) NSUInteger activeFormatIndex;
-@end
-
-@interface CamProviderSource : NSObject <CMIOExtensionProviderSource>
-@property (nonatomic, strong) CMIOExtensionProvider *provider;
-@property (nonatomic, strong) CamDeviceSource *deviceSource;
-@end
+const size_t kCamModeCount = sizeof kCamModes / sizeof kCamModes[0];
+os_log_t g_cam_log = OS_LOG_DEFAULT;
 
 /* ---------- stream ---------- */
 
@@ -47,16 +25,17 @@ static const CamMode kModes[] = {
     HDCapFrameSource *_source;
     NSUInteger _streamingCount;
     BOOL _lastWasSynthetic;
+    uint64_t _nextDueNs;   /* decimation to the active format's frame rate */
 }
 
 - (instancetype)initWithLocalizedName:(NSString *)name streamID:(NSUUID *)sid
 {
     if ((self = [super init])) {
         NSMutableArray *formats = [NSMutableArray array];
-        for (size_t i = 0; i < MODE_COUNT; i++) {
+        for (size_t i = 0; i < kCamModeCount; i++) {
             CMVideoFormatDescriptionRef fd = NULL;
-            CMVideoFormatDescriptionCreate(NULL, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kModes[i].w, kModes[i].h, NULL, &fd);
-            CMTime dur = CMTimeMake(1, kModes[i].fps);
+            CMVideoFormatDescriptionCreate(NULL, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCamModes[i].w, kCamModes[i].h, NULL, &fd);
+            CMTime dur = CMTimeMake(1, kCamModes[i].fps);
             [formats addObject:[CMIOExtensionStreamFormat streamFormatWithFormatDescription:fd maxFrameDuration:dur minFrameDuration:dur validFrameDurations:nil]];
             CFRelease(fd);
         }
@@ -64,7 +43,7 @@ static const CamMode kModes[] = {
         _activeFormatIndex = 2; /* 1280x720@60 */
         _stream = [CMIOExtensionStream streamWithLocalizedName:name streamID:sid direction:CMIOExtensionStreamDirectionSource
                                                     clockType:CMIOExtensionStreamClockTypeHostTime source:self];
-        const CamMode *m = &kModes[_activeFormatIndex];
+        const CamMode *m = &kCamModes[_activeFormatIndex];
         _source = [[HDCapFrameSource alloc] initWithWidth:m->w height:m->h fps:m->fps];
         __weak CamStreamSource *weakSelf = self;
         _source.frameHandler = ^(CVPixelBufferRef buf, uint64_t hostNs, BOOL synthetic) { [weakSelf sendBuffer:buf hostNs:hostNs synthetic:synthetic]; };
@@ -74,10 +53,16 @@ static const CamMode kModes[] = {
 
 - (void)sendBuffer:(CVPixelBufferRef)buf hostNs:(uint64_t)hostNs synthetic:(BOOL)synthetic
 {
+    const CamMode *m = &kCamModes[_activeFormatIndex];
+    /* The source runs at the input's rate (often 60 Hz); send at most the format's rate. A frame is
+     * due from a quarter period early (USB timing jitter); late frames re-anchor the schedule. */
+    uint64_t period = 1000000000ull / (uint64_t)m->fps;
+    if (_nextDueNs && hostNs + period / 4 < _nextDueNs)
+        return;
+    _nextDueNs = (_nextDueNs && hostNs < _nextDueNs + period) ? _nextDueNs + period : hostNs + period;
     CMVideoFormatDescriptionRef fd = NULL;
     if (CMVideoFormatDescriptionCreateForImageBuffer(NULL, buf, &fd) != noErr)
         return;
-    const CamMode *m = &kModes[_activeFormatIndex];
     CMSampleTimingInfo timing = { CMTimeMake(1, m->fps), CMTimeMake((int64_t)hostNs, 1000000000), kCMTimeInvalid };
     CMSampleBufferRef sb = NULL;
     if (CMSampleBufferCreateReadyWithImageBuffer(NULL, buf, fd, &timing, &sb) == noErr) {
@@ -103,7 +88,7 @@ static const CamMode kModes[] = {
     if ([properties containsObject:CMIOExtensionPropertyStreamActiveFormatIndex])
         p.activeFormatIndex = @(_activeFormatIndex);
     if ([properties containsObject:CMIOExtensionPropertyStreamFrameDuration]) {
-        CMTime d = CMTimeMake(1, kModes[_activeFormatIndex].fps);
+        CMTime d = CMTimeMake(1, kCamModes[_activeFormatIndex].fps);
         p.frameDuration = CFBridgingRelease(CMTimeCopyAsDictionary(d, NULL));
     }
     return p;
@@ -112,11 +97,12 @@ static const CamMode kModes[] = {
 - (BOOL)setStreamProperties:(CMIOExtensionStreamProperties *)streamProperties error:(NSError **)outError
 {
     NSNumber *idx = streamProperties.activeFormatIndex;
-    if (idx && idx.unsignedIntegerValue < MODE_COUNT && idx.unsignedIntegerValue != _activeFormatIndex) {
+    if (idx && idx.unsignedIntegerValue < kCamModeCount && idx.unsignedIntegerValue != _activeFormatIndex) {
         _activeFormatIndex = idx.unsignedIntegerValue;
-        const CamMode *m = &kModes[_activeFormatIndex];
+        const CamMode *m = &kCamModes[_activeFormatIndex];
+        _nextDueNs = 0;
         [_source setWidth:m->w height:m->h fps:m->fps];
-        os_log(g_log, "format -> %dx%d@%d", m->w, m->h, m->fps);
+        os_log(g_cam_log, "format -> %dx%d@%d", m->w, m->h, m->fps);
     }
     return YES;
 }
@@ -126,8 +112,9 @@ static const CamMode kModes[] = {
 - (BOOL)startStreamAndReturnError:(NSError **)outError
 {
     if (_streamingCount++ == 0) {
-        os_log(g_log, "stream start");
+        os_log(g_cam_log, "stream start");
         _lastWasSynthetic = NO;
+        _nextDueNs = 0;
         [_source start];
     }
     return YES;
@@ -136,7 +123,7 @@ static const CamMode kModes[] = {
 - (BOOL)stopStreamAndReturnError:(NSError **)outError
 {
     if (_streamingCount && --_streamingCount == 0) {
-        os_log(g_log, "stream stop");
+        os_log(g_cam_log, "stream stop");
         [_source stop];
     }
     return YES;
@@ -157,7 +144,7 @@ static const CamMode kModes[] = {
         _streamSource.deviceSource = self;
         NSError *err = nil;
         if (![_device addStream:_streamSource.stream error:&err])
-            os_log_error(g_log, "addStream: %{public}@", err);
+            os_log_error(g_cam_log, "addStream: %{public}@", err);
     }
     return self;
 }
@@ -193,7 +180,7 @@ static const CamMode kModes[] = {
         _deviceSource = [[CamDeviceSource alloc] initWithLocalizedName:@"USB3HDCAP"];
         NSError *err = nil;
         if (![_provider addDevice:_deviceSource.device error:&err])
-            os_log_error(g_log, "addDevice: %{public}@", err);
+            os_log_error(g_cam_log, "addDevice: %{public}@", err);
     }
     return self;
 }
@@ -213,14 +200,3 @@ static const CamMode kModes[] = {
 - (BOOL)setProviderProperties:(CMIOExtensionProviderProperties *)providerProperties error:(NSError **)outError { return YES; }
 @end
 
-int main(void)
-{
-    @autoreleasepool {
-        g_log = os_log_create("org.open-usb3hdcap.camera", "extension");
-        CamProviderSource *ps = [[CamProviderSource alloc] initWithClientQueue:nil];
-        [CMIOExtensionProvider startServiceWithProvider:ps.provider];
-        os_log(g_log, "camera extension started");
-        CFRunLoopRun();
-    }
-    return 0;
-}

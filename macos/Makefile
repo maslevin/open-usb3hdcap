@@ -17,7 +17,7 @@ SIGN_IDENTITY ?= -
 TEAM_ID  ?= TEAMID
 UNIV     = -arch arm64 -arch x86_64
 
-all: $(OUT)/hdcapd $(OUT)/hdcapd-client $(HAL) $(OUT)/hal-harness $(OUT)/frame-source-test $(APP)
+all: $(OUT)/hdcapd $(OUT)/hdcapd-client $(HAL) $(OUT)/hal-harness $(OUT)/frame-source-test $(OUT)/camera-harness $(APP)
 
 ../libhdcap.a: FORCE
 	$(MAKE) -C .. libhdcap.a
@@ -49,8 +49,8 @@ $(OUT)/frame-source-test: camera/frame-source-test.m camera/HDCapFrameSource.m c
 	$(CC) -O2 -g -Wall -Wextra -fobjc-arc -I../include -o $@ camera/frame-source-test.m camera/HDCapFrameSource.m ../libhdcap.a $(CAMFW)
 
 # Universal libhdcap is not needed: the extension and app only speak XPC to hdcapd.
-CAM_SRC  = camera/CameraExtension.m camera/HDCapFrameSource.m
-$(APP): app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) camera/HDCapFrameSource.h camera/Info.plist camera/camera.entitlements common/hdcapd_protocol.h
+CAM_SRC  = camera/main.m camera/CameraExtension.m camera/HDCapFrameSource.m
+$(APP): app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) camera/HDCapFrameSource.h camera/CameraExtension.h camera/Info.plist camera/camera.entitlements common/hdcapd_protocol.h
 	rm -rf $@
 	@mkdir -p $@/Contents/MacOS $(EXT)/Contents/MacOS
 	sed 's/@TEAM_ID@/$(TEAM_ID)/g' camera/Info.plist > $(EXT)/Contents/Info.plist
@@ -70,6 +70,11 @@ ifeq ($(SIGN_IDENTITY),-)
 else
 	codesign --force --sign "$(SIGN_IDENTITY)" --options runtime --timestamp --entitlements $(OUT)/app.entitlements $@
 endif
+
+$(OUT)/camera-harness: camera/camera-harness.m camera/CameraExtension.m camera/CameraExtension.h camera/HDCapFrameSource.m camera/HDCapFrameSource.h ../libhdcap.a
+	@mkdir -p $(OUT)
+	$(CC) -O2 -g -Wall -Wextra -fobjc-arc -I../include -o $@ camera/camera-harness.m camera/CameraExtension.m camera/HDCapFrameSource.m \
+		../libhdcap.a $(CAMFW) -framework CoreMediaIO -framework CoreAudio
 
 clean:
 	rm -rf $(OUT)

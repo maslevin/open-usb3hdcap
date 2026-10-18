@@ -44,7 +44,9 @@ extension nor the audio plug-in can own the device; a third process must.
   the card runs about −161 ppm against the host. With a host-paced clock that meant a 100 ms
   replay every ~10 minutes; with tracking, the latency stays flat. Core Audio sees a device
   whose clock is not the host's (`ClockIsStable` 0) and resamples as needed, as it does for
-  real USB devices. `hdcapd-client drift [S]` measures the ratio; `hal-harness` reports
+  real USB devices. The device reports `kAudioDevicePropertyLatency` = 4800 frames (the read
+  offset), so apps that align by timestamp line audio up with the camera's frames, which carry
+  their capture time. `hdcapd-client drift [S]` measures the ratio; `hal-harness` reports
   latency, clock and resync counts.
 - **Timestamps:** `hdcap_now_ns()` is `CLOCK_UPTIME_RAW` on macOS (mach_absolute_time in ns), the
   host clock CoreMediaIO and Core Audio use, so frame `time_ns` can be passed straight through.
@@ -66,8 +68,9 @@ extension nor the audio plug-in can own the device; a third process must.
 | `common/hdcapd_protocol.h` | XPC protocol and shared ring layout |
 | `hal/hdcap_hal.c`, `hal/Info.plist` | HAL plug-in → `build/USB3HDCAP.driver` (universal) |
 | `hal/hal-harness.c` | loads the `.driver` in-process like coreaudiod and runs IO against hdcapd |
-| `camera/HDCapFrameSource.[hm]` | hdcapd video client: IOSurface → letterboxed NV12 `CVPixelBuffer`, black filler without signal |
-| `camera/CameraExtension.m` | CMIOExtension provider/device/stream (1080p/720p/480p × 60/30) |
+| `camera/HDCapFrameSource.[hm]` | hdcapd video client: IOSurface → letterboxed NV12 `CVPixelBuffer` (SD 720-wide sources shown 4:3, BT.601 704-sample aperture), black filler without signal |
+| `camera/CameraExtension.[hm]`, `camera/main.m` | CMIOExtension provider/device/stream (1080p/720p/480p × 60/30, decimated to the format's rate) |
+| `camera/camera-harness.m` | drives the extension classes in-process (no activation): checks frame size, rate, timestamps, format switching, stop/restart |
 | `camera/frame-source-test.m` | runs the camera pipeline outside the extension, saves a frame |
 | `app/HostApp.m` | `USB3HDCAP.app`: activates the extension, input selector, live status |
 | `scripts/dev-agent.sh` | per-user hdcapd for development (`load`/`unload`/`log`) |
@@ -82,7 +85,7 @@ Build everything with `make -C macos` (needs `make` at the top level for `libhdc
 | hdcapd | **verified**: 1280×720 @ 60 fps, 48 kHz audio ring, no gaps, input switching, idle release |
 | Camera pipeline (`HDCapFrameSource`) | **verified** via `frame-source-test`: 60 fps, ~1 ms capture→output, correct colour |
 | HAL plug-in | **verified in-process** via `hal-harness` (objects, properties, format, IO reads the ring). Not yet installed into coreaudiod (needs `install-system.sh`, i.e. sudo) |
-| Camera extension + host app | builds, ad-hoc signed, app launches. **Activation blocked on the developer account** (see below) |
+| Camera extension + host app | extension classes **verified in-process** via `camera-harness` (all formats, 30/60 fps decimation, timestamps within a few ms of capture, stop/restart). Activation blocked on the developer account (see below) |
 
 ### When the Developer Program membership is active
 1. In the developer portal: App IDs `org.open-usb3hdcap.app` (System Extension capability, App

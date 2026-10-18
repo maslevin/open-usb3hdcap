@@ -469,7 +469,9 @@ static OSStatus HAL_GetPropertyData(AudioServerPlugInDriverRef d, AudioObjectID 
         case kAudioDevicePropertyDeviceIsRunning: PUT(UInt32, g_io_clients > 0);
         case kAudioDevicePropertyDeviceCanBeDefaultDevice: PUT(UInt32, a->mScope != kAudioObjectPropertyScopeOutput);
         case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: PUT(UInt32, 0);
-        case kAudioDevicePropertyLatency: PUT(UInt32, 0);
+        /* Samples are read READ_LATENCY frames behind capture; reporting it lets apps place audio
+         * at its true capture time (the camera extension's frames carry their capture time). */
+        case kAudioDevicePropertyLatency: PUT(UInt32, READ_LATENCY);
         case kAudioDevicePropertySafetyOffset: PUT(UInt32, 0);
         case kAudioDevicePropertyIsHidden: PUT(UInt32, 0);
         case kAudioDevicePropertyZeroTimeStampPeriod: PUT(UInt32, RING_PERIOD);

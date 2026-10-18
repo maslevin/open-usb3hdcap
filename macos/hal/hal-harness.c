@@ -71,6 +71,7 @@ int main(int argc, char **argv)
     print_str(dev, kAudioDevicePropertyDeviceUID, "uid");
     printf("  %-14s %u\n  %-14s %u\n", "zts period", get_u32(dev, kAudioDevicePropertyZeroTimeStampPeriod, 0),
            "direction", get_u32(stream, kAudioStreamPropertyDirection, 0));
+    printf("  %-14s %u frames\n", "latency", get_u32(dev, kAudioDevicePropertyLatency, kAudioObjectPropertyScopeInput));
     AudioStreamBasicDescription f;
     a = (AudioObjectPropertyAddress){ kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
     sz = sizeof f;

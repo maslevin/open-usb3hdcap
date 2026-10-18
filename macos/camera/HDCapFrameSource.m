@@ -21,6 +21,8 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
     CVPixelBufferRef _black;
     uint64_t _lastRealNs;
     BOOL _running;
+    int _geomSrcW, _geomSrcH, _geomDstW, _geomDstH;   /* geometry the transfer session is set up for */
+    NSDictionary *_srcAperture;
 }
 
 - (instancetype)initWithWidth:(int)width height:(int)height fps:(int)fps
@@ -29,7 +31,7 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
         dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
         _q = dispatch_queue_create("org.open-usb3hdcap.framesource", attr);
         VTPixelTransferSessionCreate(NULL, &_xfer);
-        VTSessionSetProperty(_xfer, kVTPixelTransferPropertyKey_ScalingMode, kVTScalingMode_Letterbox);
+        VTSessionSetProperty(_xfer, kVTPixelTransferPropertyKey_ScalingMode, kVTScalingMode_CropSourceToCleanAperture);
         VTSessionSetProperty(_xfer, kVTPixelTransferPropertyKey_DestinationYCbCrMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
         [self configureWidth:width height:height fps:fps];
     }
@@ -69,6 +71,7 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
 
 - (void)tagBuffer:(CVPixelBufferRef)b
 {
+    CVBufferRemoveAttachment(b, kCVImageBufferCleanApertureKey);
     CVBufferSetAttachment(b, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
     CVBufferSetAttachment(b, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
     CVBufferSetAttachment(b, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
@@ -164,6 +167,33 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
     _statusHandler(st);
 }
 
+static NSDictionary *aperture(int w, int h)
+{
+    return @{ (id)kCVImageBufferCleanApertureWidthKey: @(w), (id)kCVImageBufferCleanApertureHeightKey: @(h),
+              (id)kCVImageBufferCleanApertureHorizontalOffsetKey: @0, (id)kCVImageBufferCleanApertureVerticalOffsetKey: @0 };
+}
+
+/* Picture geometry. Square pixels except SD (720 x 480/486/576 from the analog decoders and
+ * component SD): BT.601 sampling, 704 active samples = 4:3. (HDMI/DVI 720x480 with a 16:9 AVI
+ * aspect would need the InfoFrame's aspect field; treated as 4:3 for now.) The picture is fitted
+ * into the output with the same aspect, centred; VideoToolbox fills the bars with black. */
+- (void)setUpGeometryForSourceWidth:(int)sw height:(int)sh
+{
+    if (sw == _geomSrcW && sh == _geomSrcH && _width == _geomDstW && _height == _geomDstH)
+        return;
+    BOOL sd = sw == 720 && ((sh >= 470 && sh <= 490) || (sh >= 570 && sh <= 580));
+    int cw = sd ? 704 : sw;
+    double dar = sd ? 4.0 / 3.0 : (double)sw / sh;
+    int dw = _width, dh = _height;
+    if ((double)_width / _height > dar)
+        dw = (int)(_height * dar + 0.5) & ~1;
+    else
+        dh = (int)(_width / dar + 0.5) & ~1;
+    _srcAperture = aperture(cw, sh);
+    VTSessionSetProperty(_xfer, kVTPixelTransferPropertyKey_DestinationCleanAperture, (__bridge CFDictionaryRef)aperture(dw, dh));
+    _geomSrcW = sw; _geomSrcH = sh; _geomDstW = _width; _geomDstH = _height;
+}
+
 - (void)handleMessage:(xpc_object_t)ev
 {
     if (xpc_get_type(ev) != XPC_TYPE_DICTIONARY) return;
@@ -179,6 +209,8 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
     if (!src) return;
     /* hdcapd output is BT.709/601 per input; tag as 709 (HD inputs) for the converter. */
     CVBufferSetAttachment(src, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
+    [self setUpGeometryForSourceWidth:(int)CVPixelBufferGetWidth(src) height:(int)CVPixelBufferGetHeight(src)];
+    CVBufferSetAttachment(src, kCVImageBufferCleanApertureKey, (__bridge CFDictionaryRef)_srcAperture, kCVAttachmentMode_ShouldNotPropagate);
     if (CVPixelBufferPoolCreatePixelBuffer(NULL, _pool, &dst) == kCVReturnSuccess &&
         VTPixelTransferSessionTransferImage(_xfer, src, dst) == noErr) {
         [self tagBuffer:dst];
