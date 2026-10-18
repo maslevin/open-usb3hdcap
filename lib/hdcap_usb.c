@@ -15,7 +15,6 @@
 
 #define ISO_EP          0x83
 #define ISO_IFACE       0
-#define ISO_ALT         1
 #define ISO_TRANSFERS   8
 #define ISO_PACKETS     32
 
@@ -86,6 +85,17 @@ void hdcap_close(hdcap *dev)
     if (dev->ctx)
         libusb_exit(dev->ctx);
     free(dev);
+}
+
+int hdcap_link_speed_mbps(const hdcap *dev)
+{
+    switch (libusb_get_device_speed(libusb_get_device(dev->h))) {
+    case LIBUSB_SPEED_SUPER_PLUS: return 10000;
+    case LIBUSB_SPEED_SUPER:      return 5000;
+    case LIBUSB_SPEED_HIGH:       return 480;
+    case LIBUSB_SPEED_FULL:       return 12;
+    default:                      return 0;
+    }
 }
 
 int hdcap_vendor_out(hdcap *dev, uint8_t req, uint16_t value, uint16_t index)
@@ -215,12 +225,15 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
 
 int hdcap_stream_start(hdcap *dev, hdcap_demux *dx)
 {
-    int r = hdcap_set_alt(dev, ISO_IFACE, ISO_ALT);
+    /* SuperSpeed: alt 1 (the vendor driver's choice). High Speed: alt 2 is the largest. */
+    int alt = hdcap_link_speed_mbps(dev) >= 5000 ? 1 : 2;
+    int r = hdcap_set_alt(dev, ISO_IFACE, alt);
     if (r < 0)
         return r;
-    /* Per-interval size for the streaming alt setting (wMaxPacketSize x burst x mult; 16 KiB for alt 1).
-     * libusb_get_max_iso_packet_size() would report alt setting 0, which has zero bandwidth. */
-    dev->pkt_size = libusb_get_max_alt_packet_size(libusb_get_device(dev->h), ISO_IFACE, ISO_ALT, ISO_EP);
+    /* Per-interval size for the streaming alt setting (wMaxPacketSize x burst x mult: 16 KiB at
+     * SuperSpeed alt 1, 3 KiB at High Speed alt 2). libusb_get_max_iso_packet_size() would report
+     * alt setting 0, which has zero bandwidth. */
+    dev->pkt_size = libusb_get_max_alt_packet_size(libusb_get_device(dev->h), ISO_IFACE, alt, ISO_EP);
     if (dev->pkt_size <= 0)
         return dev->pkt_size ? dev->pkt_size : LIBUSB_ERROR_OTHER;
     dev->dx = dx;

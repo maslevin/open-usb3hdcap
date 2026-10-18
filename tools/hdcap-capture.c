@@ -134,6 +134,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "open: %s\n", hdcap_strerror(r));
         return 1;
     }
+    int mbps = hdcap_link_speed_mbps(dev);
+    fprintf(stderr, "USB link: %d Mbit/s%s\n", mbps,
+            mbps < 5000 ? "  (WARNING: not SuperSpeed; only SD composite/S-Video can fit through USB 2.0)" : "");
     if (input >= 0) {
         hdcap_signal sig;
         double t0 = now();

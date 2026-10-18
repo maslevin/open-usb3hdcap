@@ -6,3 +6,4 @@ tests/*.ppm
 capture-out/
 third_party/
 build/
+tests/usb_info

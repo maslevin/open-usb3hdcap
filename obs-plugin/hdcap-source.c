@@ -132,6 +132,10 @@ static void *worker(void *data)
                 break;
             continue;
         }
+        int mbps = hdcap_link_speed_mbps(dev);
+        if (mbps < 5000)
+            blog(LOG_WARNING, "[usb3hdcap] device is connected at %d Mbit/s, not USB 3 SuperSpeed: only "
+                 "Composite/S-Video fit through USB 2.0. Use a USB 3 port, hub and cable.", mbps);
         blog(LOG_INFO, "[usb3hdcap] %s selected; waiting for signal", hdcap_input_name(input));
         hdcap_signal sig;
         int locked = 0;

@@ -38,6 +38,10 @@ int  hdcap_open(hdcap **out);
 void hdcap_close(hdcap *dev);
 const char *hdcap_strerror(int err);
 
+/* USB link speed in Mbit/s (5000 for SuperSpeed, 480 for High Speed). Video above ~24 MB/s
+ * (HDMI, VGA, Component progressive) needs SuperSpeed. */
+int hdcap_link_speed_mbps(const hdcap *dev);
+
 /* Low-level control */
 int hdcap_vendor_out(hdcap *dev, uint8_t req, uint16_t value, uint16_t index);
 int hdcap_i2c_write(hdcap *dev, uint8_t addr, uint8_t reg, uint8_t val);
@@ -111,7 +115,8 @@ void hdcap_demux_get_stats(const hdcap_demux *dx, hdcap_demux_stats *st);
 
 /* ---------- Streaming ---------- */
 
-/* Start isochronous streaming (selects IF0 alt 1). Payload is fed to the given demuxer. */
+/* Start isochronous streaming. Selects IF0 alt 1 on SuperSpeed (16 KiB per 125 us) or alt 2 on
+ * High Speed (3 KiB per 125 us, the most USB 2.0 allows). Payload is fed to the given demuxer. */
 int  hdcap_stream_start(hdcap *dev, hdcap_demux *dx);
 /* Pump USB events; call repeatedly. timeout_ms <= 0 means non-blocking. */
 int  hdcap_stream_poll(hdcap *dev, int timeout_ms);
