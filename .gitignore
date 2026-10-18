@@ -11,3 +11,4 @@ tests/avi_debug
 build-dist/
 dist/
 macos/build/
+tests/resample_sim

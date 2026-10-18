@@ -44,6 +44,9 @@ struct hdcap_source {
     uint64_t last_frame_ns;
     int16_t  audio[AUDIO_CHUNK * 2];
     size_t   audio_fill;
+    uint64_t audio_chunk_ts;        /* timestamp of audio[0] */
+    hdcap_resampler *resampler;     /* card audio clock -> host clock */
+    uint64_t audio_next_log_ns;
 };
 
 static const char *hdcap_get_name(void *unused)
@@ -84,25 +87,52 @@ static void flush_audio(struct hdcap_source *s)
     a.speakers = SPEAKERS_STEREO;
     a.format = AUDIO_FORMAT_16BIT;
     a.samples_per_sec = 48000;
-    /* Timestamp of the first sample in the chunk, estimated from arrival time. */
-    a.timestamp = os_gettime_ns() - (uint64_t)s->audio_fill * 1000000000ULL / 48000;
+    a.timestamp = s->audio_chunk_ts;
     obs_source_output_audio(s->source, &a);
     s->audio_fill = 0;
 }
 
+/* The card's audio clock is not the host's (one HDMI source measured -218 ppm). Feeding it to OBS
+ * with arrival timestamps made OBS reset the source's audio timing (an audible skip) whenever
+ * sample count and timestamps diverged by 70 ms, every ~5 minutes. The resampler converts to the
+ * host's 48 kHz with continuous timestamps that track the true capture time. */
 static void on_audio(const int16_t *samples, size_t count, void *user)
 {
     struct hdcap_source *s = user;
+    int16_t out[(2048 + 16) * 2];
+    uint64_t now = os_gettime_ns();
     while (count) {
-        size_t n = AUDIO_CHUNK - s->audio_fill;
-        if (n > count)
-            n = count;
-        memcpy(s->audio + s->audio_fill * 2, samples, n * 4);
-        s->audio_fill += n;
-        samples += n * 2;
-        count -= n;
-        if (s->audio_fill == AUDIO_CHUNK)
-            flush_audio(s);
+        size_t in_n = count > 2048 ? 2048 : count;
+        uint64_t ts;
+        size_t n = hdcap_resampler_process(s->resampler, samples, in_n, now, out, 2048 + 16, &ts);
+        samples += in_n * 2;
+        count -= in_n;
+        /* a timeline reset (signal gap) must not be glued onto a partly filled chunk */
+        if (s->audio_fill && n) {
+            int64_t expect = (int64_t)(s->audio_chunk_ts + (uint64_t)s->audio_fill * 1000000000ULL / 48000);
+            if (llabs((int64_t)ts - expect) > 1000000)
+                flush_audio(s);
+        }
+        for (size_t i = 0; i < n;) {
+            if (!s->audio_fill)
+                s->audio_chunk_ts = ts + (uint64_t)i * 1000000000ULL / 48000;
+            size_t k = AUDIO_CHUNK - s->audio_fill;
+            if (k > n - i)
+                k = n - i;
+            memcpy(s->audio + s->audio_fill * 2, out + i * 2, k * 4);
+            s->audio_fill += k;
+            i += k;
+            if (s->audio_fill == AUDIO_CHUNK)
+                flush_audio(s);
+        }
+    }
+    if (now >= s->audio_next_log_ns) {
+        hdcap_resampler_stats st;
+        hdcap_resampler_get_stats(s->resampler, &st);
+        if (s->audio_next_log_ns)
+            blog(LOG_INFO, "[usb3hdcap] audio clock: card %.3f Hz (%+.0f ppm), timeline error %+.2f ms, resets %llu",
+                 st.card_rate_hz, (st.card_rate_hz / 48000 - 1) * 1e6, st.error_ms, (unsigned long long)st.resets);
+        s->audio_next_log_ns = now + 300000000000ULL;
     }
 }
 
@@ -199,6 +229,8 @@ static void *worker(void *data)
         hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, s);
         double rate = hdcap_estimate_rate(input, &sig, applied_mode);
         blog(LOG_INFO, "[usb3hdcap] expected stream rate %.1f MB/s", rate / 1e6);
+        hdcap_resampler_reset(s->resampler); /* new stream: new audio timeline */
+        s->audio_next_log_ns = 0;
         if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
             blog(LOG_WARNING, "[usb3hdcap] stream start failed: %s", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));
             hdcap_demux_free(dx);
@@ -263,6 +295,7 @@ static void *hdcap_create(obs_data_t *settings, obs_source_t *source)
 {
     struct hdcap_source *s = bzalloc(sizeof(*s));
     s->source = source;
+    s->resampler = hdcap_resampler_new();
     pthread_mutex_init(&s->settings_lock, NULL);
     os_event_init(&s->restart, OS_EVENT_TYPE_MANUAL);
     atomic_init(&s->stop, false);
@@ -281,6 +314,7 @@ static void hdcap_destroy(void *data)
         pthread_join(s->thread, NULL);
     os_event_destroy(s->restart);
     pthread_mutex_destroy(&s->settings_lock);
+    hdcap_resampler_free(s->resampler);
     bfree(s);
 }
 

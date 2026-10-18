@@ -31,6 +31,7 @@ VGA 640×480, HDMI 720p, NTSC composite/S-Video and component 480i/480p captures
 | `tools/pcap2seq.py` | Turn a USBPcap capture window into a sequence file |
 | `sequences/` | Bootstrap sequence files (see `sequences/README.md`) |
 | `tests/demux_file.c` | Feed a raw payload file through the demuxer |
+| `lib/hdcap_resample.c`, `tests/resample_sim.c` | Drift-correcting resampler (card audio clock → host clock) and its simulation test |
 | `docs/PROTOCOL.md` | The observed protocol: control requests, chips, stream format |
 
 ## Build (macOS or Linux)

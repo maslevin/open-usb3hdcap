@@ -240,6 +240,28 @@ const char *hdcap_session_state_name(hdcap_session_state st);
 /* Monotonic clock in nanoseconds (the timebase of the session callbacks). */
 uint64_t hdcap_now_ns(void);
 
+/* ---------- Audio clock conversion ---------- */
+
+/* Drift-correcting resampler for the card's 48 kHz stereo int16 audio. The card's clock is not
+ * the host's (typically some hundred ppm apart). Feed input frames with their arrival time on
+ * the host clock; output is exactly 48 kHz on the host clock, stamped on a continuous timeline
+ * (*out_ts_ns = host time of the first output frame). Output per call is about `frames`
+ * (size out_cap at frames + 16). Not thread-safe; one instance per stream. */
+typedef struct hdcap_resampler hdcap_resampler;
+typedef struct {
+    double card_rate_hz;   /* measured input rate */
+    double ratio_ppm;      /* current input step vs nominal */
+    double error_ms;       /* filtered timeline error vs capture time */
+    uint64_t resets;       /* timeline resets (gaps, restarts) */
+} hdcap_resampler_stats;
+
+hdcap_resampler *hdcap_resampler_new(void);
+void hdcap_resampler_free(hdcap_resampler *r);
+void hdcap_resampler_reset(hdcap_resampler *r);
+size_t hdcap_resampler_process(hdcap_resampler *r, const int16_t *in, size_t frames, uint64_t now_ns,
+                               int16_t *out, size_t out_cap, uint64_t *out_ts_ns);
+void hdcap_resampler_get_stats(const hdcap_resampler *r, hdcap_resampler_stats *st);
+
 /* ---------- Helpers ---------- */
 
 /* Convert packed YUYV (BT.601 limited range) to RGB24. */
