@@ -90,9 +90,29 @@ int main(int argc, char **argv)
     Float64 zst; UInt64 zht, seed;
     (*drv)->GetZeroTimeStamp(drv, dev, 1, &zst, &zht, &seed);
     sample = zst;
-    uint64_t start = mach_absolute_time();
-    uint64_t end_ticks = (uint64_t)seconds * 1000000000ull * tb.denom / tb.numer;
-    while (mach_absolute_time() - start < end_ticks) {
+    /* Pace like coreaudiod: map sample time to host time through the plug-in's zero timestamps
+     * (rate from the last two of them) and run the cycle for [sample, sample+N) when the host clock
+     * reaches the end of that span. */
+    CFBundleRef bundle = CFPlugInGetBundle(plug);
+    _Atomic uint64_t *under = CFBundleGetDataPointerForName(bundle, CFSTR("hdcap_hal_resyncs_under"));
+    _Atomic uint64_t *over = CFBundleGetDataPointerForName(bundle, CFSTR("hdcap_hal_resyncs_over"));
+    _Atomic int64_t *lat = CFBundleGetDataPointerForName(bundle, CFSTR("hdcap_hal_latency"));
+    _Atomic int64_t *ppm = CFBundleGetDataPointerForName(bundle, CFSTR("hdcap_hal_ratio_ppm"));
+    int64_t lat_min = INT64_MAX, lat_max = INT64_MIN;
+    Float64 prev_zst = -1; UInt64 prev_zht = 0;
+    double ticks_per_frame = 1e9 * tb.denom / tb.numer / 48000.0;
+    int report_every = seconds > 60 ? 30 : 1;
+    while (frames < (unsigned long)seconds * 48000) {
+        (*drv)->GetZeroTimeStamp(drv, dev, 1, &zst, &zht, &seed);
+        if (zst != prev_zst) {
+            if (prev_zst >= 0)
+                ticks_per_frame = (double)(zht - prev_zht) / (zst - prev_zst);
+            prev_zst = zst; prev_zht = zht;
+        }
+        uint64_t due = zht + (uint64_t)((sample + N - zst) * ticks_per_frame);
+        uint64_t now = mach_absolute_time();
+        if (now < due)
+            usleep((useconds_t)((due - now) / ticks_per_frame * 1e6 / 48000));
         AudioServerPlugInIOCycleInfo ci = {0};
         ci.mIOCycleCounter = cycles;
         ci.mNominalIOBufferFrameSize = N;
@@ -108,10 +128,18 @@ int main(int argc, char **argv)
         }
         frames += N;
         cycles++;
+        if (lat && *lat) {
+            if (*lat < lat_min) lat_min = *lat;
+            if (*lat > lat_max) lat_max = *lat;
+        }
         sample += N;
-        if (cycles % ((unsigned long)(48000 / N)) == 0)
-            printf("  %5.1fs  rms L %.4f  peak %.3f  large steps %lu\n", frames / 48000.0, sqrt(sum / (double)frames), peak, jumps);
-        usleep((useconds_t)(N * 1e6 / 48000));
+        if (frames % ((unsigned long)report_every * 48000) < N) {
+            printf("  %6.1fs  rms L %.4f  peak %.3f  large steps %lu  resyncs under %llu over %llu  latency %lld [%lld..%lld]  clock %+.3f ppm\n",
+                   frames / 48000.0, sqrt(sum / (double)frames), peak, jumps, under ? (unsigned long long)*under : 0ULL,
+                   over ? (unsigned long long)*over : 0ULL, lat ? (long long)*lat : 0LL, (long long)lat_min, (long long)lat_max,
+                   ppm ? *ppm / 1.0 : 0.0);
+            fflush(stdout);
+        }
     }
     (*drv)->StopIO(drv, dev, 1);
     printf("done: %lu cycles\n", cycles);

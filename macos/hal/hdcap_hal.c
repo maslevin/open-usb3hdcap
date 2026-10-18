@@ -6,8 +6,14 @@
  * One input device ("USB3HDCAP", 48 kHz stereo). While IO runs, the plug-in is an audio client of
  * hdcapd (macos/common/hdcapd_protocol.h): it maps the daemon's shared ring buffer and reads from
  * it about 100 ms behind the write position, converting int16 to float32. Without the daemon it
- * produces silence. Timing follows the host clock (zero timestamps every RING_PERIOD frames);
- * device/host clock drift is absorbed by resynchronising the read position when it leaves a window.
+ * produces silence.
+ *
+ * Clock: the device's zero timestamps (every RING_PERIOD frames) run at the *card's* audio rate,
+ * not the host's (the card measured ~160 ppm slow on one HDMI source, which with a host-paced clock
+ * meant a 100 ms jump every ~10 minutes). Each period's length comes from the card/host rate ratio,
+ * measured from the ring's write position against its host timestamps since IO started, plus a
+ * small proportional correction that holds the read latency at READ_LATENCY. Resynchronising the
+ * read position remains as a fallback (stream restarts, gross errors).
  *
  * Object IDs: 1 = plug-in (kAudioObjectPlugInObject), 2 = device, 3 = input stream.
  */
@@ -22,6 +28,7 @@
 #include <os/log.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <time.h>
 
 #define OBJ_PLUGIN  kAudioObjectPlugInObject
 #define OBJ_DEVICE  2
@@ -31,6 +38,7 @@
 #define CHANNELS      2
 #define RING_PERIOD   16384          /* zero-timestamp period (frames) */
 #define READ_LATENCY  4800           /* read this far behind the daemon's write position */
+#define STALE_NS      100000000ull   /* ring not written for this long = no live audio */
 #define DEVICE_UID    "org.open-usb3hdcap.hal.device"
 #define MODEL_UID     "org.open-usb3hdcap.hal.model"
 
@@ -41,13 +49,24 @@ static os_unfair_lock g_lock = OS_UNFAIR_LOCK_INIT;
 
 /* IO state */
 static UInt32 g_io_clients;
-static UInt64 g_anchor_host, g_timestamps;
-static Float64 g_ticks_per_frame;
+static Float64 g_ticks_per_frame;        /* nominal host ticks per 48 kHz frame */
+static Float64 g_ns_per_tick;
+static Float64 g_zero_host, g_zero_sample; /* current zero timestamp */
+static Float64 g_period_ticks;            /* length of the current period in host ticks */
+static Float64 g_ratio;                   /* card rate / 48000, measured */
+static int g_rate_valid;                  /* rate baseline (g_rate_w0, g_rate_t0) set */
+static uint64_t g_rate_w0, g_rate_t0;
+static uint32_t g_rate_gen;
 static xpc_connection_t g_conn;
 static const hdcapd_audio_ring *_Atomic g_ring;
 static int64_t g_offset;             /* ring frame = sample time + offset */
 static int g_offset_valid;
 static uint32_t g_generation;
+/* Diagnostics (read by hal-harness via CFBundleGetDataPointerForName): drift resyncs, split by
+ * direction (card behind host = underrun, card ahead = overrun). */
+__attribute__((visibility("default"))) _Atomic uint64_t hdcap_hal_resyncs_under, hdcap_hal_resyncs_over;
+/* Latest read latency (frames behind the writer) and clock ratio (ppm vs nominal), per period. */
+__attribute__((visibility("default"))) _Atomic int64_t hdcap_hal_latency, hdcap_hal_ratio_ppm;
 
 static HRESULT HAL_QueryInterface(void *self, REFIID iid, LPVOID *out);
 static ULONG HAL_AddRef(void *self);
@@ -117,7 +136,8 @@ static OSStatus HAL_Initialize(AudioServerPlugInDriverRef d, AudioServerPlugInHo
     g_host = host;
     mach_timebase_info_data_t tb;
     mach_timebase_info(&tb);
-    g_ticks_per_frame = (1e9 * tb.denom / tb.numer) / SAMPLE_RATE;
+    g_ns_per_tick = (double)tb.numer / tb.denom;
+    g_ticks_per_frame = 1e9 / g_ns_per_tick / SAMPLE_RATE;
     os_log(g_log, "USB3HDCAP HAL plug-in initialized");
     return kAudioHardwareNoError;
 }
@@ -180,8 +200,11 @@ static OSStatus HAL_StartIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt
         return kAudioHardwareBadObjectError;
     os_unfair_lock_lock(&g_lock);
     if (g_io_clients++ == 0) {
-        g_anchor_host = mach_absolute_time();
-        g_timestamps = 0;
+        g_zero_host = (Float64)mach_absolute_time();
+        g_zero_sample = 0;
+        g_period_ticks = g_ticks_per_frame * RING_PERIOD;
+        g_ratio = 1.0;
+        g_rate_valid = 0;
         g_offset_valid = 0;
         os_unfair_lock_unlock(&g_lock);
         connect_daemon();
@@ -201,7 +224,45 @@ static OSStatus HAL_StopIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt3
     os_unfair_lock_unlock(&g_lock);
     if (last)
         disconnect_daemon();
+    if (last)
+        os_log(g_log, "IO stopped; drift resyncs: %llu underrun, %llu overrun", (unsigned long long)hdcap_hal_resyncs_under,
+               (unsigned long long)hdcap_hal_resyncs_over);
     return kAudioHardwareNoError;
+}
+
+/* Length of the next period: nominal, scaled by the measured card rate and a latency correction.
+ * Called with g_lock held, once per period, on the IO thread. */
+static Float64 next_period_ticks(UInt64 now)
+{
+    const hdcapd_audio_ring *ring = atomic_load(&g_ring);
+    uint64_t now_ns = (uint64_t)(now * g_ns_per_tick);
+    if (!ring)
+        return g_ticks_per_frame * RING_PERIOD / g_ratio;
+    uint64_t t = atomic_load_explicit(&ring->write_time_ns, memory_order_acquire);
+    uint64_t w = atomic_load_explicit(&ring->write_frames, memory_order_acquire);
+    uint32_t gen = atomic_load_explicit(&ring->generation, memory_order_relaxed);
+    if (now_ns - t > STALE_NS || !g_rate_valid || gen != g_rate_gen) {
+        /* (re)start the rate measurement; keep the last ratio meanwhile */
+        g_rate_valid = now_ns - t <= STALE_NS;
+        g_rate_w0 = w; g_rate_t0 = t; g_rate_gen = gen;
+        return g_ticks_per_frame * RING_PERIOD / g_ratio;
+    }
+    if (t - g_rate_t0 > 10000000000ull)   /* need >10 s for a usable estimate (USB burst jitter ~ms) */
+        g_ratio = (double)(w - g_rate_w0) / ((double)(t - g_rate_t0) * 1e-9) / SAMPLE_RATE;
+    double ratio = g_ratio;
+    if (g_offset_valid) {
+        /* frames the writer is ahead of where we read now; target READ_LATENCY */
+        double sample_now = g_zero_sample + (now - g_zero_host) / g_period_ticks * RING_PERIOD;
+        double w_now = (double)w + (double)(now_ns - t) * 1e-9 * SAMPLE_RATE * g_ratio;
+        double lat = w_now - (sample_now + (double)g_offset);
+        double e = (lat - READ_LATENCY) / READ_LATENCY;
+        if (e > 1) e = 1;
+        if (e < -1) e = -1;
+        ratio *= 1 + e * 100e-6;           /* behind -> run slightly faster, and vice versa */
+        atomic_store_explicit(&hdcap_hal_latency, (int64_t)lat, memory_order_relaxed);
+    }
+    atomic_store_explicit(&hdcap_hal_ratio_ppm, (int64_t)((ratio - 1) * 1e6), memory_order_relaxed);
+    return g_ticks_per_frame * RING_PERIOD / ratio;
 }
 
 static OSStatus HAL_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID id, UInt32 client, Float64 *st, UInt64 *ht, UInt64 *seed)
@@ -211,11 +272,13 @@ static OSStatus HAL_GetZeroTimeStamp(AudioServerPlugInDriverRef d, AudioObjectID
         return kAudioHardwareBadObjectError;
     os_unfair_lock_lock(&g_lock);
     UInt64 now = mach_absolute_time();
-    Float64 ticks_per_period = g_ticks_per_frame * RING_PERIOD;
-    if (g_anchor_host + (UInt64)((g_timestamps + 1) * ticks_per_period) <= now)
-        g_timestamps++;
-    *st = (Float64)g_timestamps * RING_PERIOD;
-    *ht = g_anchor_host + (UInt64)(g_timestamps * ticks_per_period);
+    if ((Float64)now >= g_zero_host + g_period_ticks) {
+        g_zero_host += g_period_ticks;
+        g_zero_sample += RING_PERIOD;
+        g_period_ticks = next_period_ticks(now);
+    }
+    *st = g_zero_sample;
+    *ht = (UInt64)g_zero_host;
     *seed = 1;
     os_unfair_lock_unlock(&g_lock);
     return kAudioHardwareNoError;
@@ -243,6 +306,14 @@ static OSStatus HAL_DoIO(AudioServerPlugInDriverRef d, AudioObjectID id, AudioOb
         memset(out, 0, (size_t)frames * CHANNELS * sizeof(float));
         return kAudioHardwareNoError;
     }
+    /* Stale ring (stream starting, signal lost, daemon stalled): silence, and re-align once data
+     * flows again so leftover samples from an earlier session are never played. */
+    uint64_t wt = atomic_load_explicit(&ring->write_time_ns, memory_order_relaxed);
+    if (clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - wt > STALE_NS) {
+        g_offset_valid = 0;
+        memset(out, 0, (size_t)frames * CHANNELS * sizeof(float));
+        return kAudioHardwareNoError;
+    }
     int64_t w = (int64_t)atomic_load_explicit(&ring->write_frames, memory_order_acquire);
     int64_t s = (int64_t)ci->mInputTime.mSampleTime;
     uint32_t gen = atomic_load_explicit(&ring->generation, memory_order_relaxed);
@@ -250,6 +321,8 @@ static OSStatus HAL_DoIO(AudioServerPlugInDriverRef d, AudioObjectID id, AudioOb
     /* (Re)synchronise when not yet aligned, after a stream restart, or when drift has moved the
      * read position outside [w - capacity/2, w - frames]. */
     if (!g_offset_valid || gen != g_generation || pos + frames > w || pos < w - (int64_t)HDCAPD_RING_FRAMES / 2) {
+        if (g_offset_valid && gen == g_generation)
+            atomic_fetch_add_explicit(pos + frames > w ? &hdcap_hal_resyncs_under : &hdcap_hal_resyncs_over, 1, memory_order_relaxed);
         g_offset = (w - READ_LATENCY) - s;
         g_offset_valid = 1;
         g_generation = gen;

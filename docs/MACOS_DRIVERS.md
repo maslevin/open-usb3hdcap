@@ -37,10 +37,15 @@ extension nor the audio plug-in can own the device; a third process must.
   must copy the frame (or finish with it) before the pool wraps. The camera extension copies into
   its own `CVPixelBufferPool`.
 - **Audio:** a mapped ring (`xpc_shmem`) with a header (format, capacity, 64-bit write position,
-  host time of the last write). Clients read behind the write position. The HAL plug-in runs its
-  zero timestamps on the host clock and reads ~100 ms behind the writer, re-aligning when the
-  card's 48 kHz clock has drifted outside a window (a click every few minutes at worst; proper
-  rate matching is a later refinement).
+  host time of the last write). Clients read behind the write position. The HAL plug-in reads
+  ~100 ms behind the writer and runs its zero timestamps at the **card's** audio rate: the
+  card/host ratio comes from the ring's write position against its timestamps, plus a small
+  proportional term that holds the read latency on target. Measured on HDMI from a Genesis Mini,
+  the card runs about −161 ppm against the host. With a host-paced clock that meant a 100 ms
+  replay every ~10 minutes; with tracking, the latency stays flat. Core Audio sees a device
+  whose clock is not the host's (`ClockIsStable` 0) and resamples as needed, as it does for
+  real USB devices. `hdcapd-client drift [S]` measures the ratio; `hal-harness` reports
+  latency, clock and resync counts.
 - **Timestamps:** `hdcap_now_ns()` is `CLOCK_UPTIME_RAW` on macOS (mach_absolute_time in ns), the
   host clock CoreMediaIO and Core Audio use, so frame `time_ns` can be passed straight through.
 - **Control:** XPC messages to change input/mode/standard/offsets and to query status (signal,
@@ -66,6 +71,7 @@ extension nor the audio plug-in can own the device; a third process must.
 | `camera/frame-source-test.m` | runs the camera pipeline outside the extension, saves a frame |
 | `app/HostApp.m` | `USB3HDCAP.app`: activates the extension, input selector, live status |
 | `scripts/dev-agent.sh` | per-user hdcapd for development (`load`/`unload`/`log`) |
+| `hdcapd-client drift [S]` | measures the card audio clock against the host clock |
 | `scripts/install-system.sh` | `sudo … install|uninstall`: hdcapd LaunchDaemon + HAL plug-in |
 
 Build everything with `make -C macos` (needs `make` at the top level for `libhdcap.a`).

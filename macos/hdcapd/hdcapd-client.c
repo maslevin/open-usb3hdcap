@@ -4,6 +4,7 @@
  * hdcapd-client: test client for hdcapd.
  *   hdcapd-client status
  *   hdcapd-client watch [SECONDS] [OUT.ppm]     subscribe to video + audio, report rates, save a frame
+ *   hdcapd-client drift [SECONDS]               measure the card's audio clock against the host clock
  *   hdcapd-client set INPUT [ANALOG_MODE H_OFF V_OFF TV_STD]   (INPUT: hdmi dvi vga component composite s-video)
  */
 #include "hdcap.h"
@@ -92,8 +93,53 @@ int main(int argc, char **argv)
         print_status(request(c, m));
         return 0;
     }
+    if (!strcmp(cmd, "drift")) {
+        /* Card audio clock vs host clock: least-squares fit of the ring's write position against
+         * its host timestamp, sampled every second. */
+        int seconds = argc > 2 ? atoi(argv[2]) : 600;
+        xpc_connection_t c = connect_daemon(q, NULL);
+        xpc_object_t hello = xpc_dictionary_create(NULL, NULL, 0);
+        xpc_dictionary_set_string(hello, "cmd", "hello");
+        xpc_dictionary_set_string(hello, "client", "hdcapd-client drift");
+        xpc_dictionary_set_bool(hello, "video", false);
+        xpc_dictionary_set_bool(hello, "audio", true);
+        xpc_object_t r = request(c, hello);
+        void *addr = NULL;
+        xpc_object_t shm = xpc_dictionary_get_value(r, "audio_ring");
+        const hdcapd_audio_ring *ring = shm && xpc_shmem_map(shm, &addr) >= HDCAPD_RING_BYTES ? addr : NULL;
+        if (!ring || ring->magic != HDCAPD_RING_MAGIC) {
+            fprintf(stderr, "no audio ring\n");
+            return 1;
+        }
+        sleep(3); /* let the stream settle */
+        double n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, x0 = 0, y0 = 0;
+        uint32_t gen = atomic_load(&ring->generation);
+        for (int t = 1; t <= seconds; t++) {
+            sleep(1);
+            uint64_t w, ts;
+            do { /* consistent pair: re-read if the writer advanced in between */
+                w = atomic_load(&ring->write_frames);
+                ts = atomic_load(&ring->write_time_ns);
+            } while (w != atomic_load(&ring->write_frames));
+            if (atomic_load(&ring->generation) != gen) {
+                printf("stream restarted; fit reset\n");
+                gen = atomic_load(&ring->generation);
+                n = sx = sy = sxx = sxy = 0;
+            }
+            if (n == 0) { x0 = ts / 1e9; y0 = (double)w; }
+            double x = ts / 1e9 - x0, y = (double)w - y0;
+            n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
+            if (n >= 10 && (t % 30 == 0 || t == seconds)) {
+                double rate = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+                printf("%5ds  card rate %.3f Hz  drift %+.1f ppm vs host\n", t, rate, (rate / 48000.0 - 1) * 1e6);
+                fflush(stdout);
+            }
+        }
+        xpc_connection_cancel(c);
+        return 0;
+    }
     if (strcmp(cmd, "watch") != 0) {
-        fprintf(stderr, "usage: hdcapd-client status | watch [SECONDS] [OUT.ppm] | set INPUT [MODE H V STD]\n");
+        fprintf(stderr, "usage: hdcapd-client status | watch [SECONDS] [OUT.ppm] | drift [SECONDS] | set INPUT [MODE H V STD]\n");
         return 2;
     }
 
