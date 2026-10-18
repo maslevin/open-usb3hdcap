@@ -1,0 +1,180 @@
+/*
+ * hdcap-capture: run init sequences, stream from the USB3HDCAP, save frames (PPM) and audio (WAV).
+ *
+ *   hdcap-capture -s sequences/open.seq -s sequences/select_hdmi.seq -t 5 -n 3 -o out/
+ */
+#include "hdcap.h"
+
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+
+typedef struct {
+    const char *outdir;
+    int   want_frames, saved;
+    uint8_t *rgb;
+    size_t   rgb_size;
+    FILE    *wav;
+    uint64_t wav_frames;
+    int last_w, last_h, last_i;
+} ctx_t;
+
+static volatile sig_atomic_t stop;
+static void on_sigint(int s) { (void)s; stop = 1; }
+
+static double now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void on_frame(const hdcap_frame *f, void *user)
+{
+    ctx_t *c = user;
+    c->last_w = f->width;
+    c->last_h = f->height;
+    c->last_i = f->interlaced;
+    if (c->saved >= c->want_frames)
+        return;
+    size_t need = (size_t)f->width * f->height * 3;
+    if (need > c->rgb_size) {
+        free(c->rgb);
+        c->rgb = malloc(need);
+        c->rgb_size = c->rgb ? need : 0;
+        if (!c->rgb)
+            return;
+    }
+    hdcap_yuyv_to_rgb24(f->yuyv, c->rgb, f->width, f->height);
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame_%03d.ppm", c->outdir, c->saved);
+    FILE *o = fopen(path, "wb");
+    if (!o) {
+        perror(path);
+        return;
+    }
+    fprintf(o, "P6\n%d %d\n255\n", f->width, f->height);
+    fwrite(c->rgb, 1, need, o);
+    fclose(o);
+    fprintf(stderr, "saved %s (%dx%d%s)\n", path, f->width, f->height, f->interlaced ? ", woven fields" : "");
+    c->saved++;
+}
+
+static void on_audio(const int16_t *s, size_t n, void *user)
+{
+    ctx_t *c = user;
+    if (c->wav) {
+        fwrite(s, 4, n, c->wav);
+        c->wav_frames += n;
+    }
+}
+
+static void wav_header(FILE *f, uint32_t frames)
+{
+    uint32_t data = frames * 4, riff = 36 + data, fmt = 16, rate = 48000, brate = 192000;
+    uint16_t pcm = 1, ch = 2, align = 4, bits = 16;
+    fseek(f, 0, SEEK_SET);
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+    fwrite(&fmt, 4, 1, f); fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f);
+    fwrite(&brate, 4, 1, f); fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
+}
+
+static void usage(void)
+{
+    fprintf(stderr,
+            "usage: hdcap-capture [-s seqfile]... [-t seconds] [-n frames] [-o outdir] [-v]\n"
+            "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
+            "  -t SEC    stream duration (default 5)\n"
+            "  -n N      number of frames to save as PPM (default 3)\n"
+            "  -o DIR    output directory (default capture-out)\n"
+            "  -v        verbose (repeat for per-operation trace)\n");
+}
+
+int main(int argc, char **argv)
+{
+    const char *seqs[16];
+    int nseq = 0, verbose = 0;
+    double seconds = 5;
+    ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
+    int opt;
+    while ((opt = getopt(argc, argv, "s:t:n:o:vh")) != -1) {
+        switch (opt) {
+        case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
+        case 't': seconds = atof(optarg); break;
+        case 'n': c.want_frames = atoi(optarg); break;
+        case 'o': c.outdir = optarg; break;
+        case 'v': verbose++; break;
+        default: usage(); return 2;
+        }
+    }
+    if (mkdir(c.outdir, 0755) < 0 && errno != EEXIST) {
+        perror(c.outdir);
+        return 1;
+    }
+
+    hdcap *dev;
+    int r = hdcap_open(&dev);
+    if (r < 0) {
+        fprintf(stderr, "open: %s\n", hdcap_strerror(r));
+        return 1;
+    }
+    for (int i = 0; i < nseq; i++) {
+        fprintf(stderr, "running %s\n", seqs[i]);
+        double t0 = now();
+        if ((r = hdcap_run_sequence(dev, seqs[i], verbose)) < 0) {
+            hdcap_close(dev);
+            return 1;
+        }
+        fprintf(stderr, "  done in %.2f s\n", now() - t0);
+    }
+
+    char wavpath[1024];
+    snprintf(wavpath, sizeof wavpath, "%s/audio.wav", c.outdir);
+    c.wav = fopen(wavpath, "wb");
+    if (c.wav)
+        wav_header(c.wav, 0);
+
+    hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, &c);
+    if (!dx || (r = hdcap_stream_start(dev, dx)) < 0) {
+        fprintf(stderr, "stream start: %s\n", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));
+        hdcap_demux_free(dx);
+        hdcap_close(dev);
+        return 1;
+    }
+    signal(SIGINT, on_sigint);
+    double t0 = now(), next = t0 + 1;
+    uint64_t last_frames = 0, last_bytes = 0;
+    while (!stop && now() - t0 < seconds) {
+        hdcap_stream_poll(dev, 100);
+        if (now() >= next) {
+            hdcap_demux_stats ds;
+            hdcap_stream_stats ss;
+            hdcap_demux_get_stats(dx, &ds);
+            hdcap_stream_get_stats(dev, &ss);
+            fprintf(stderr, "%5.1fs  xfers %llu pkts %llu empty %llu  %6.1f MB/s  %3llu fps  frame %dx%d%s  line %d B  audio %llu  resync %llu  drop %llu  pkt err %llu\n",
+                    now() - t0, (unsigned long long)ss.transfers, (unsigned long long)ss.packets, (unsigned long long)ss.empty_packets, (ss.bytes - last_bytes) / 1e6, (unsigned long long)(ds.frames - last_frames),
+                    c.last_w, c.last_h, c.last_i ? "i" : "p", ds.last_line_bytes,
+                    (unsigned long long)ds.audio_frames, (unsigned long long)ds.resyncs,
+                    (unsigned long long)ds.dropped_frames, (unsigned long long)ss.error_packets);
+            last_frames = ds.frames;
+            last_bytes = ss.bytes;
+            next += 1;
+        }
+    }
+    hdcap_stream_stop(dev);
+    if (c.wav) {
+        wav_header(c.wav, (uint32_t)c.wav_frames);
+        fclose(c.wav);
+        fprintf(stderr, "saved %s (%.1f s)\n", wavpath, c.wav_frames / 48000.0);
+    }
+    hdcap_demux_free(dx);
+    hdcap_close(dev);
+    free(c.rgb);
+    return 0;
+}

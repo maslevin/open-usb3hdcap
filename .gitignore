@@ -1,0 +1,6 @@
+*.o
+*.a
+hdcap-capture
+tests/demux_file
+tests/*.ppm
+capture-out/
