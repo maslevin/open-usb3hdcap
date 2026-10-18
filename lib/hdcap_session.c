@@ -40,6 +40,10 @@ struct hdcap_session {
 
 uint64_t hdcap_now_ns(void)
 {
+#ifdef __APPLE__
+    /* mach_absolute_time in ns: the host clock CoreMediaIO and Core Audio timestamps use */
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+#endif
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;

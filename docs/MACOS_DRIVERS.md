@@ -37,8 +37,12 @@ extension nor the audio plug-in can own the device; a third process must.
   must copy the frame (or finish with it) before the pool wraps. The camera extension copies into
   its own `CVPixelBufferPool`.
 - **Audio:** a mapped ring (`xpc_shmem`) with a header (format, capacity, 64-bit write position,
-  host time of the last write). Clients read behind the write position; the HAL plug-in reports
-  its zero timestamps from the daemon's clock anchor.
+  host time of the last write). Clients read behind the write position. The HAL plug-in runs its
+  zero timestamps on the host clock and reads ~100 ms behind the writer, re-aligning when the
+  card's 48 kHz clock has drifted outside a window (a click every few minutes at worst; proper
+  rate matching is a later refinement).
+- **Timestamps:** `hdcap_now_ns()` is `CLOCK_UPTIME_RAW` on macOS (mach_absolute_time in ns), the
+  host clock CoreMediaIO and Core Audio use, so frame `time_ns` can be passed straight through.
 - **Control:** XPC messages to change input/mode/standard/offsets and to query status (signal,
   resolution, frame rate).
 
@@ -49,5 +53,40 @@ extension nor the audio plug-in can own the device; a third process must.
 | HAL plug-in (`/Library/Audio/Plug-Ins/HAL`) | ad-hoc should load in coreaudiod (needs sudo to install, restart coreaudiod) | Developer ID + notarization |
 | Camera Extension + host app | needs a provisioning profile with the System Extension capability (paid Developer Program), or SIP disabled + `systemextensionsctl developer on` | Developer ID + notarization |
 
-## Status
-See the README's status section; this document describes the target design.
+## Source layout (`macos/`)
+| Path | What |
+|---|---|
+| `hdcapd/hdcapd.c` | the daemon |
+| `hdcapd/hdcapd-client.c` | test client: `status`, `watch [S] [out.ppm]`, `set INPUT …` |
+| `common/hdcapd_protocol.h` | XPC protocol and shared ring layout |
+| `hal/hdcap_hal.c`, `hal/Info.plist` | HAL plug-in → `build/USB3HDCAP.driver` (universal) |
+| `hal/hal-harness.c` | loads the `.driver` in-process like coreaudiod and runs IO against hdcapd |
+| `camera/HDCapFrameSource.[hm]` | hdcapd video client: IOSurface → letterboxed NV12 `CVPixelBuffer`, black filler without signal |
+| `camera/CameraExtension.m` | CMIOExtension provider/device/stream (1080p/720p/480p × 60/30) |
+| `camera/frame-source-test.m` | runs the camera pipeline outside the extension, saves a frame |
+| `app/HostApp.m` | `USB3HDCAP.app`: activates the extension, input selector, live status |
+| `scripts/dev-agent.sh` | per-user hdcapd for development (`load`/`unload`/`log`) |
+| `scripts/install-system.sh` | `sudo … install|uninstall`: hdcapd LaunchDaemon + HAL plug-in |
+
+Build everything with `make -C macos` (needs `make` at the top level for `libhdcap.a`).
+
+## Status (October 2026)
+| Piece | State |
+|---|---|
+| hdcapd | **verified**: 1280×720 @ 60 fps, 48 kHz audio ring, no gaps, input switching, idle release |
+| Camera pipeline (`HDCapFrameSource`) | **verified** via `frame-source-test`: 60 fps, ~1 ms capture→output, correct colour |
+| HAL plug-in | **verified in-process** via `hal-harness` (objects, properties, format, IO reads the ring). Not yet installed into coreaudiod (needs `install-system.sh`, i.e. sudo) |
+| Camera extension + host app | builds, ad-hoc signed, app launches. **Activation blocked on the developer account** (see below) |
+
+### When the Developer Program membership is active
+1. In the developer portal: App IDs `org.open-usb3hdcap.app` (System Extension capability, App
+   Group `<TEAM>.org.open-usb3hdcap.app`) and `org.open-usb3hdcap.app.camera` (same App Group);
+   a Developer ID provisioning profile for each.
+2. `make -C macos SIGN_IDENTITY="Developer ID Application: …" TEAM_ID=<TEAM> PROFILE_APP=… PROFILE_EXT=…`
+3. Copy `USB3HDCAP.app` to `/Applications` (system extensions only activate from there), run it,
+   click **Install Camera**, approve in System Settings.
+4. Sign hdcapd and the HAL plug-in with the same identity; notarize all of it (a .pkg that installs
+   the app, the LaunchDaemon and the HAL plug-in is the natural distribution unit).
+
+Without the account, the extension can still be tried on a test Mac with SIP disabled and
+`systemextensionsctl developer on`.
