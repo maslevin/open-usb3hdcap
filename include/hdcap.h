@@ -193,6 +193,53 @@ typedef struct {
 } hdcap_stream_stats;
 void hdcap_stream_get_stats(const hdcap *dev, hdcap_stream_stats *st);
 
+/* ---------- Session: the complete capture loop on a worker thread ---------- */
+
+typedef struct hdcap_session hdcap_session;
+
+typedef struct {
+    hdcap_input input;
+    int         analog_mode;   /* VGA/Component: -1 = auto, else index into hdcap_modes() */
+    int         h_offset, v_offset;
+    hdcap_std   tv_standard;   /* Composite/S-Video */
+} hdcap_session_config;
+
+typedef enum {
+    HDCAP_SESSION_STARTING, HDCAP_SESSION_NO_DEVICE, HDCAP_SESSION_NO_SIGNAL,
+    HDCAP_SESSION_STREAMING, HDCAP_SESSION_ERROR, HDCAP_SESSION_STOPPED
+} hdcap_session_state;
+
+typedef struct {
+    hdcap_session_state state;
+    hdcap_input  input;
+    hdcap_signal signal;
+    int          width, height, interlaced;  /* of delivered frames (0 until streaming) */
+    double       fps;                        /* measured over the last second */
+    int          link_mbps;
+    char         detail[160];                /* human-readable: mode / standard / error */
+} hdcap_session_status;
+
+enum { HDCAP_LOG_DEBUG, HDCAP_LOG_INFO, HDCAP_LOG_WARNING, HDCAP_LOG_ERROR };
+
+typedef struct {
+    /* All callbacks run on the session's worker thread. now_ns = hdcap_now_ns() at delivery. */
+    void (*on_frame)(const hdcap_frame *frame, uint64_t now_ns, void *user);
+    void (*on_audio)(const int16_t *samples, size_t count, uint64_t now_ns, void *user);
+    void (*on_status)(const hdcap_session_status *status, void *user);   /* on changes, and once a second */
+    void (*log)(int level, const char *message, void *user);
+    void *user;
+} hdcap_session_callbacks;
+
+hdcap_session *hdcap_session_start(const hdcap_session_config *cfg, const hdcap_session_callbacks *cb);
+/* Apply a new configuration: the session restarts its loop with it. */
+void hdcap_session_set_config(hdcap_session *s, const hdcap_session_config *cfg);
+void hdcap_session_get_config(hdcap_session *s, hdcap_session_config *cfg);
+void hdcap_session_get_status(hdcap_session *s, hdcap_session_status *st);
+void hdcap_session_stop(hdcap_session *s);
+const char *hdcap_session_state_name(hdcap_session_state st);
+/* Monotonic clock in nanoseconds (the timebase of the session callbacks). */
+uint64_t hdcap_now_ns(void);
+
 /* ---------- Helpers ---------- */
 
 /* Convert packed YUYV (BT.601 limited range) to RGB24. */

@@ -10,3 +10,4 @@ tests/usb_info
 tests/avi_debug
 build-dist/
 dist/
+macos/build/

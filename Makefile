@@ -5,7 +5,7 @@ CFLAGS  ?= -O2 -g -Wall -Wextra -std=c11
 CFLAGS  += -Iinclude $(shell pkg-config --cflags libusb-1.0)
 LDLIBS  += $(shell pkg-config --libs libusb-1.0)
 
-LIB_SRC = lib/hdcap_usb.c lib/hdcap_demux.c lib/hdcap_control.c lib/hdcap_tables.c lib/hdcap_modes.c
+LIB_SRC = lib/hdcap_usb.c lib/hdcap_demux.c lib/hdcap_control.c lib/hdcap_tables.c lib/hdcap_modes.c lib/hdcap_session.c
 LIB_OBJ = $(LIB_SRC:.c=.o)
 
 all: libhdcap.a hdcap-capture
