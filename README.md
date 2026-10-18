@@ -62,3 +62,14 @@ Requires CMake, libusb, pkgconf and SIMDe (`brew install libusb pkgconf simde cm
     cmake --build build && cmake --install build      # -> ~/Library/Application Support/obs-studio/plugins
 
 In OBS, add a **USB3HDCAP Capture** source and pick the input in its properties.
+
+## License
+Copyright (C) 2026 Matt Slevinsky.
+
+open-usb3hdcap is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 2 of the
+License, or (at your option) any later version (`SPDX-License-Identifier: GPL-2.0-or-later`).
+See [LICENSE](LICENSE). It is distributed WITHOUT ANY WARRANTY.
+
+Release packages bundle [libusb](https://libusb.info) (LGPL-2.1-or-later). Chip datasheets and the
+vendor driver are not part of this repository.

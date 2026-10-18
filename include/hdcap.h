@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /*
  * open-usb3hdcap: user-space driver core for the StarTech USB3HDCAP (YUAN UB-530, USB 1164:F533).
  *

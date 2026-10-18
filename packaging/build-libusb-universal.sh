@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 # Build a universal (arm64 + x86_64) libusb dylib for bundling into the OBS plugin.
 # Output: third_party/libusb-universal/{lib/libusb-1.0.0.dylib,include/libusb-1.0/libusb.h}
 set -e

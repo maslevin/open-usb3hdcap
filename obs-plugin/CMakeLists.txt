@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 cmake_minimum_required(VERSION 3.20)
 
 # Build the OBS source plugin (macOS, OBS 28+ .plugin bundle layout).
@@ -79,6 +81,8 @@ set_target_properties(usb3hdcap PROPERTIES
 add_custom_command(TARGET usb3hdcap POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory "${RES}/locale"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/"
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/en-GB.ini")
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/en-GB.ini"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${RES}/licenses"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE" "${RES}/licenses/LICENSE.open-usb3hdcap")
 
 install(TARGETS usb3hdcap LIBRARY DESTINATION "$ENV{HOME}/Library/Application Support/obs-studio/plugins")

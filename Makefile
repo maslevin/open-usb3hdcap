@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 CC      ?= cc
 CFLAGS  ?= -O2 -g -Wall -Wextra -std=c11
 CFLAGS  += -Iinclude $(shell pkg-config --cflags libusb-1.0)

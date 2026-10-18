@@ -54,4 +54,6 @@ analog VGA are implemented but have not been tested yet; reports are welcome.
 Quit OBS and delete `~/Library/Application Support/obs-studio/plugins/usb3hdcap.plugin`.
 
 ## Licences
-The plugin bundles libusb (LGPL-2.1, licence text in `usb3hdcap.plugin/Contents/Resources/licenses/`).
+open-usb3hdcap is free software under the **GNU General Public License v2.0 or later** (`LICENSE`).
+Source code: the open-usb3hdcap repository. The plugin bundles libusb (LGPL-2.1-or-later). Both
+licence texts are also in `usb3hdcap.plugin/Contents/Resources/licenses/`.

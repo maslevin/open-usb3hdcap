@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 # Fetch the libobs headers matching the installed OBS.app into third_party/obs-studio-<version>.
 # usage: obs-plugin/fetch-libobs-headers.sh [/Applications/OBS.app]
 set -e

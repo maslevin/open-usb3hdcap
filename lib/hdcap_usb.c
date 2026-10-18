@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /*
  * USB access for the USB3HDCAP: device open, vendor requests, sequence files, isochronous streaming.
  */

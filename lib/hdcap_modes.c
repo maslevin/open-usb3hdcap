@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /*
  * Analog (VGA / Component) timing modes: identification and MST3367 programming.
  *

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /*
  * OBS source for the StarTech USB3HDCAP, built on libhdcap.
  *

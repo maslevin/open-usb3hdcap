@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 # Install the USB3HDCAP OBS plugin for the current user (run from the unzipped folder).
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)

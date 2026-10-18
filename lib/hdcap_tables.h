@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /* Register tables for input selection (generated: lib/hdcap_tables.c, tools/gen_tables.py). */
 #ifndef HDCAP_TABLES_H
 #define HDCAP_TABLES_H

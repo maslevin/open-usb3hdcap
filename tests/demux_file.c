@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /* Feed a raw reassembled isochronous payload file through the demuxer and report what it finds. */
 #include "hdcap.h"
 #include <stdio.h>

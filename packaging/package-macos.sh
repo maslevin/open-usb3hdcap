@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 # Build, sign and zip the OBS plugin for distribution (universal arm64 + x86_64, bundled libusb).
 #
 #   packaging/package-macos.sh                 # ad-hoc signed zip in dist/
@@ -44,5 +46,6 @@ rm -rf "dist/$NAME" "dist/$NAME.zip" && mkdir -p "dist/$NAME"
 ditto "$P" "dist/$NAME/usb3hdcap.plugin"
 cp packaging/install.sh "dist/$NAME/install.sh"
 cp packaging/INSTALL.md "dist/$NAME/INSTALL.md"
+cp LICENSE "dist/$NAME/LICENSE"
 (cd dist && ditto -c -k --keepParent "$NAME" "$NAME.zip")
 echo "dist/$NAME.zip  (signed: $([ "$IDENT" = "-" ] && echo ad-hoc || echo "$IDENT"), headers: OBS $OBSV)"

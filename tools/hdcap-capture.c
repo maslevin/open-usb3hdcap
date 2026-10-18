@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /*
  * hdcap-capture: run init sequences, stream from the USB3HDCAP, save frames (PPM) and audio (WAV).
  *

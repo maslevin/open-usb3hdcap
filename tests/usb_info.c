@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 Matt Slevinsky */
 /* Print link speed and the interface/alt-setting/endpoint layout of the USB3HDCAP. */
 #include <libusb.h>
 #include <stdio.h>

@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 # Capture from VGA/Component with auto mode detection, save a PNG and report timing + picture bounds.
 # usage: tools/test_analog_mode.sh <vga|component> <label> [extra hdcap-capture args]
 set -e

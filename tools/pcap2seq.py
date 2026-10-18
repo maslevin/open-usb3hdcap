@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Matt Slevinsky
 """Convert a window of a USBPcap capture of the USB3HDCAP into a replayable sequence file.
 
 The sequence file is plain text, one operation per line (see sequences/README.md):
