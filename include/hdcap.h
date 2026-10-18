@@ -49,6 +49,8 @@ int hdcap_set_alt(hdcap *dev, int iface, int alt);
  * If verbose is non-zero, each operation is printed to stderr.
  */
 int hdcap_run_sequence(hdcap *dev, const char *path, int verbose);
+/* Same, but every `delay` is capped at max_delay_ms (negative = no cap). */
+int hdcap_run_sequence_ex(hdcap *dev, const char *path, int verbose, int max_delay_ms);
 
 /* ---------- Stream demultiplexing ---------- */
 

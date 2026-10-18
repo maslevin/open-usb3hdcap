@@ -13,6 +13,7 @@ captures. Next: replace replayed sequences with real input/mode handling, then t
 | Path | Contents |
 |---|---|
 | `include/hdcap.h`, `lib/` | `libhdcap`: device access (libusb), sequence runner, isochronous streaming, stream demuxer |
+| `obs-plugin/` | OBS Studio source plugin ("USB3HDCAP Capture"): YUY2 video + 48 kHz stereo audio |
 | `tools/hdcap-capture.c` | CLI: run sequences, stream, save PPM frames + WAV |
 | `tools/pcap2seq.py` | Turn a USBPcap capture window into a sequence file |
 | `sequences/` | Bootstrap sequence files (see `sequences/README.md`) |
@@ -28,3 +29,13 @@ Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
 ## Clean-room note
 This driver is written from protocol observations and public chip documentation, not from the
 vendor driver's code. The vendor driver is not redistributed here.
+
+## OBS plugin (macOS, OBS 28+; tested with OBS 32.2.2)
+Requires CMake, libusb, pkgconf and SIMDe (`brew install libusb pkgconf simde cmake`).
+
+    INC=$(obs-plugin/fetch-libobs-headers.sh)        # headers for the installed OBS version
+    cmake -S obs-plugin -B build -DLIBOBS_INCLUDE_DIR="$INC"
+    cmake --build build && cmake --install build      # -> ~/Library/Application Support/obs-studio/plugins
+
+In OBS, add a **USB3HDCAP Capture** source. For now it initializes the card with the recorded
+HDMI startup sequence (`sequences/open_hdmi.seq`, bundled with the plugin).

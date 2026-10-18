@@ -93,23 +93,25 @@ static void usage(void)
             "  -t SEC    stream duration (default 5)\n"
             "  -n N      number of frames to save as PPM (default 3)\n"
             "  -o DIR    output directory (default capture-out)\n"
+            "  -D MS     cap every sequence delay at MS milliseconds\n"
             "  -v        verbose (repeat for per-operation trace)\n");
 }
 
 int main(int argc, char **argv)
 {
     const char *seqs[16];
-    int nseq = 0, verbose = 0;
+    int nseq = 0, verbose = 0, max_delay = -1;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:t:n:o:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
         case 'n': c.want_frames = atoi(optarg); break;
         case 'o': c.outdir = optarg; break;
         case 'v': verbose++; break;
+        case 'D': max_delay = atoi(optarg); break;
         default: usage(); return 2;
         }
     }
@@ -127,7 +129,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < nseq; i++) {
         fprintf(stderr, "running %s\n", seqs[i]);
         double t0 = now();
-        if ((r = hdcap_run_sequence(dev, seqs[i], verbose)) < 0) {
+        if ((r = hdcap_run_sequence_ex(dev, seqs[i], verbose, max_delay)) < 0) {
             hdcap_close(dev);
             return 1;
         }

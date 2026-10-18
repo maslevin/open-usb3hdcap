@@ -4,3 +4,5 @@ hdcap-capture
 tests/demux_file
 tests/*.ppm
 capture-out/
+third_party/
+build/

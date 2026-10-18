@@ -125,6 +125,11 @@ static void sleep_ms(long ms)
 
 int hdcap_run_sequence(hdcap *dev, const char *path, int verbose)
 {
+    return hdcap_run_sequence_ex(dev, path, verbose, -1);
+}
+
+int hdcap_run_sequence_ex(hdcap *dev, const char *path, int verbose, int max_delay_ms)
+{
     FILE *f = fopen(path, "r");
     if (!f) {
         perror(path);
@@ -161,7 +166,7 @@ int hdcap_run_sequence(hdcap *dev, const char *path, int verbose)
         } else if (!strcmp(op, "alt") && n == 3) {
             r = hdcap_set_alt(dev, a, b);
         } else if (!strcmp(op, "delay") && n == 2) {
-            sleep_ms(a);
+            sleep_ms(max_delay_ms >= 0 && (int)a > max_delay_ms ? max_delay_ms : (long)a);
         } else {
             fprintf(stderr, "%s:%d: cannot parse: %s\n", path, lineno, line);
             rc = HDCAP_ERR_PARSE;
