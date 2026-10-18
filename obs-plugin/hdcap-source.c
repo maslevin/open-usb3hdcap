@@ -160,6 +160,15 @@ static void *worker(void *data)
         }
         blog(LOG_INFO, "[usb3hdcap] signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
              sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
+        if (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI) {
+            hdcap_digital_setup ds;
+            if ((r = hdcap_setup_digital(dev, 3000, &ds)) < 0)
+                blog(LOG_WARNING, "[usb3hdcap] digital setup failed: %s", hdcap_strerror(r));
+            else
+                blog(LOG_INFO, "[usb3hdcap] digital: AVI %s, VIC %d, %s, %s audio", ds.avi.valid ? "present" : "absent",
+                     ds.avi.vic, ds.ycbcr_passthru ? "YCbCr" : ds.full_range ? "RGB full range" : "RGB limited range",
+                     ds.embedded_audio ? "embedded" : "line-in");
+        }
         const hdcap_mode *applied_mode = NULL;
         if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
             size_t nm;

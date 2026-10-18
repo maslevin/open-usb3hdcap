@@ -88,6 +88,31 @@ int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s);
 /* Poll until a stable signal is seen (returns 1), the timeout passes (0), or an error (<0). */
 int hdcap_wait_signal(hdcap *dev, hdcap_input in, int timeout_ms, hdcap_signal *s);
 
+/* ---------- Digital inputs (HDMI / DVI): colour format and audio source ---------- */
+
+typedef struct {
+    int valid;          /* an AVI InfoFrame was received */
+    int colorspace;     /* 0 RGB, 1 YCbCr 4:2:2, 2 YCbCr 4:4:4 */
+    int colorimetry;    /* 0 none, 1 BT.601, 2 BT.709, 3 extended */
+    int quant_range;    /* RGB: 0 default, 1 limited, 2 full */
+    int vic;            /* CEA-861 video identification code (0 = none / IT format) */
+    uint8_t pb[4];      /* raw PB1..PB4 */
+} hdcap_avi;
+
+typedef struct {
+    hdcap_avi avi;
+    int  full_range;     /* RGB input treated as 0-255 */
+    int  bt709;          /* matrix uses BT.709 (else BT.601) */
+    int  ycbcr_passthru; /* source already sends YCbCr */
+    int  embedded_audio; /* audio from the HDMI stream (else line-in) */
+} hdcap_digital_setup;
+
+/* Read the AVI InfoFrame captured by the MST3367 (bank 2, 0x48-0x4B). */
+int hdcap_read_avi(hdcap *dev, hdcap_avi *avi);
+/* After lock on HDMI/DVI: wait up to timeout_ms for the AVI InfoFrame, then program the colour
+ * matrix for the source's format and select embedded or line-in audio. */
+int hdcap_setup_digital(hdcap *dev, int timeout_ms, hdcap_digital_setup *out);
+
 /* ---------- Analog timing modes (VGA / Component) ---------- */
 
 typedef struct {

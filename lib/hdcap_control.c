@@ -9,6 +9,7 @@
 
 #include <libusb.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -186,4 +187,102 @@ int hdcap_wait_signal(hdcap *dev, hdcap_input in, int timeout_ms, hdcap_signal *
         prev = *s;
         sleep_ms(100);
     }
+}
+
+/* ---------- Digital inputs: colour matrix and audio source ---------- */
+
+int hdcap_read_avi(hdcap *dev, hdcap_avi *a)
+{
+    memset(a, 0, sizeof *a);
+    /* Bank 2 0x0B is a read-to-acknowledge status register: the receiver only latches a newly
+     * received InfoFrame into 0x48-0x4B after it has been read (and the first read after a reset
+     * returns a stale value). Read it, give the receiver a frame's time, then read the InfoFrame. */
+    uint8_t ack;
+    int r0 = mst_read(dev, 0x02, 0x0B, &ack);
+    if (r0 < 0)
+        return r0;
+    sleep_ms(100);
+    for (int i = 0; i < 4; i++) {
+        int r = mst_read(dev, 0x02, (uint8_t)(0x48 + i), &a->pb[i]);
+        if (r < 0)
+            return r;
+    }
+    /* PB1..PB4 all zero = nothing received yet (or a DVI source without InfoFrames). */
+    a->valid = a->pb[0] || a->pb[1] || a->pb[2] || a->pb[3];
+    a->colorspace = (a->pb[0] >> 5) & 3;
+    a->colorimetry = (a->pb[1] >> 6) & 3;
+    a->quant_range = (a->pb[2] >> 2) & 3;
+    a->vic = a->pb[3] & 0x7F;
+    return 0;
+}
+
+/* MST3367 bank 0 0x93-0xAA: nine 15-bit two's-complement coefficients (4096 = 1.0), grouped by
+ * input channel R, G, B; within a group the outputs are Cr, Y, Cb. Then offsets for Cr, Y, Cb
+ * (64 = 1 code; 0x2000 = 128). For YCbCr input the R/G/B slots carry Cr/Y/Cb. */
+static int write_csc(hdcap *dev, const double c[9], const int off[3])
+{
+    int r = hdcap_i2c_write(dev, HDCAP_I2C_MST3367, 0x00, 0x00);
+    uint8_t reg = 0x93;
+    for (int i = 0; r >= 0 && i < 12; i++, reg += 2) {
+        int v = i < 9 ? (int)lround(c[i] * 4096) : off[i - 9];
+        v &= 0x7FFF;
+        if ((r = hdcap_i2c_write(dev, HDCAP_I2C_MST3367, reg, (uint8_t)(v >> 8))) >= 0)
+            r = hdcap_i2c_write(dev, HDCAP_I2C_MST3367, (uint8_t)(reg + 1), (uint8_t)v);
+    }
+    return r < 0 ? r : 0;
+}
+
+static int set_csc_rgb(hdcap *dev, int bt709, int full_range)
+{
+    double kr = bt709 ? 0.2126 : 0.299, kb = bt709 ? 0.0722 : 0.114, kg = 1 - kr - kb;
+    double ys = full_range ? 219.0 / 255 : 1.0, cs = full_range ? 224.0 / 255 : 224.0 / 219;
+    double cb_r = -kr / (2 * (1 - kb)) * cs, cb_g = -kg / (2 * (1 - kb)) * cs, cb_b = 0.5 * cs;
+    double cr_r = 0.5 * cs, cr_g = -kg / (2 * (1 - kr)) * cs, cr_b = -kb / (2 * (1 - kr)) * cs;
+    const double c[9] = { cr_r, kr * ys, cb_r, cr_g, kg * ys, cb_g, cr_b, kb * ys, cb_b };
+    /* Limited-range RGB keeps its +16 through the luma row (coefficients sum to 1); full range needs +16. */
+    const int off[3] = { 0x2000, full_range ? 16 * 64 : 0, 0x2000 };
+    return write_csc(dev, c, off);
+}
+
+static int set_csc_passthru(hdcap *dev)
+{
+    const double c[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    const int off[3] = { 0, 0, 0 };
+    return write_csc(dev, c, off);
+}
+
+int hdcap_setup_digital(hdcap *dev, int timeout_ms, hdcap_digital_setup *o)
+{
+    memset(o, 0, sizeof *o);
+    int r;
+    for (int waited = 0;; waited += 200) { /* each hdcap_read_avi() takes ~100 ms */
+        if ((r = hdcap_read_avi(dev, &o->avi)) < 0)
+            return r;
+        if (o->avi.valid || waited >= timeout_ms)
+            break;
+        sleep_ms(100);
+    }
+    const hdcap_avi *a = &o->avi;
+    if (a->valid && (a->colorspace == 1 || a->colorspace == 2)) {
+        o->ycbcr_passthru = 1;
+        o->bt709 = a->colorimetry != 1;
+        r = set_csc_passthru(dev);
+    } else {
+        /* RGB. Range: explicit Q field, else CEA video formats (VIC > 1) are limited and IT/PC
+         * formats (VIC 0/1, or no InfoFrame = plain DVI) are full range. */
+        o->full_range = a->quant_range == 2 || (a->quant_range == 0 && a->vic <= 1);
+        o->bt709 = a->colorimetry == 2 || (a->colorimetry == 0 && a->vic != 2 && a->vic != 3 &&
+                                           !(a->vic >= 6 && a->vic <= 15) && !(a->vic >= 17 && a->vic <= 26));
+        r = set_csc_rgb(dev, o->bt709, o->full_range);
+    }
+    if (r < 0)
+        return r;
+    /* Audio source: embedded when the receiver reports HDMI audio (bank 2 0x0B bits 6:5),
+     * otherwise line-in. CPLD 0x20 bit 4 = 1 selects line-in. */
+    uint8_t st, cp;
+    if ((r = mst_read(dev, 0x02, 0x0B, &st)) < 0 || (r = hdcap_i2c_read(dev, HDCAP_I2C_CPLD, 0x20, &cp)) < 0)
+        return r;
+    o->embedded_audio = (st & 0x60) == 0x60;
+    cp = o->embedded_audio ? (cp & ~0x10) : (cp | 0x10);
+    return hdcap_i2c_write(dev, HDCAP_I2C_CPLD, 0x20, cp);
 }

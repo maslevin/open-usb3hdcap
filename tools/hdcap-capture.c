@@ -164,6 +164,18 @@ int main(int argc, char **argv)
                 sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
                 "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
         rate = hdcap_estimate_rate(input, &sig, NULL);
+        if (r == 1 && (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI)) {
+            hdcap_digital_setup ds;
+            int rr = hdcap_setup_digital(dev, 3000, &ds);
+            if (rr < 0)
+                fprintf(stderr, "digital setup: %s\n", hdcap_strerror(rr));
+            else
+                fprintf(stderr, "digital: AVI %s [%02x %02x %02x %02x] VIC %d -> %s, %s audio\n",
+                        ds.avi.valid ? "yes" : "none", ds.avi.pb[0], ds.avi.pb[1], ds.avi.pb[2], ds.avi.pb[3], ds.avi.vic,
+                        ds.ycbcr_passthru ? "YCbCr pass-through" : ds.full_range ? (ds.bt709 ? "RGB full-range BT.709" : "RGB full-range BT.601")
+                                                                   : (ds.bt709 ? "RGB limited BT.709" : "RGB limited BT.601"),
+                        ds.embedded_audio ? "embedded" : "line-in");
+        }
         if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
             const hdcap_mode *m = NULL;
             size_t nm;

@@ -197,11 +197,15 @@ int hdcap_run_sequence_ex(hdcap *dev, const char *path, int verbose, int max_del
 /* ---------- isochronous streaming ---------- */
 
 static int debug_iso = -1;
+static FILE *dump_file; /* HDCAP_DUMP=path: append raw iso payload (debugging) */
 
 static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
 {
-    if (debug_iso < 0)
+    if (debug_iso < 0) {
         debug_iso = getenv("HDCAP_DEBUG_ISO") != NULL;
+        if (getenv("HDCAP_DUMP"))
+            dump_file = fopen(getenv("HDCAP_DUMP"), "wb");
+    }
     hdcap *dev = t->user_data;
     dev->stats.transfers++;
     if (t->status == LIBUSB_TRANSFER_COMPLETED) {
@@ -227,6 +231,8 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
                     fprintf(stderr, "\n");
                 }
             }
+            if (dump_file)
+                fwrite(libusb_get_iso_packet_buffer_simple(t, i), 1, p->actual_length, dump_file);
             hdcap_demux_feed(dev->dx, libusb_get_iso_packet_buffer_simple(t, i), p->actual_length);
         }
     }

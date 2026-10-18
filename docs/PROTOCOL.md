@@ -180,3 +180,23 @@ Bank 0:
 Captured component 480i (h-start 118 = 62+57−1, v-start 18 = 3+15, height 240 + field flag) matches
 the CEA-861 timing exactly. Sega Dreamcast VGA uses 640 active pixels on an 858-sample, 27 MHz line:
 same line rate and line count as VESA 640×480@60, so it needs a manual choice.
+
+### Digital inputs: InfoFrame, colour matrix, audio source (verified live, 2026-10-18)
+- **DVI-D** = HDMI setup with MST3367 0x51 = 0x89 (second TMDS port) and CPLD 0x01 = 0x01.
+- **MST3367 bank 2 0x48–0x4B = AVI InfoFrame PB1–PB4.**
+  - PB1 bits 6:5: 00 RGB, 01 YCbCr 4:2:2, 10 YCbCr 4:4:4.
+  - PB2 bits 7:6: colorimetry.
+  - PB3 bits 3:2: RGB quantization range.
+  - PB4: VIC.
+  - Latching requires reading **bank 2 0x0B** first (read-to-acknowledge; the first read after a
+    reset is stale). Bank 2 0x0B bits 6:5 = 11 means embedded audio present.
+- **Colour matrix, bank 0 0x93–0xAA:** nine 15-bit two's-complement coefficients (4096 = 1.0),
+  grouped by input R, G, B; within each group the outputs are Cr, Y, Cb. Then offsets Cr, Y, Cb
+  (64 = 1 code). YCbCr input uses the R/G/B slots for Cr/Y/Cb, so pass-through is the identity
+  matrix with zero offsets. The vendor HDMI table is BT.709 for limited RGB; the VGA table is
+  BT.601 for full-range RGB.
+- **CPLD 0x20 bit 4:** audio source, 0 = HDMI embedded, 1 = line-in (CS53L21). With embedded audio
+  selected but none present, the board floods the stream with silent audio records, which also
+  broke video: short lines and an apparent ~180 MB/s ceiling.
+- **Stream bandwidth:** every line (blanking included) is sent at the active width.
+  SuperSpeed alt 2 (32 KiB/125 µs) carries 1080p60 (259.8 MB/s) on this Mac.
