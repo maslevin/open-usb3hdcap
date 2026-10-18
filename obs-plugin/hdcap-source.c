@@ -23,6 +23,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("usb3hdcap", "en-US")
 #define S_MODE          "analog_mode"   /* -1 = auto, else index into hdcap_modes() */
 #define S_HOFF          "h_offset"
 #define S_VOFF          "v_offset"
+#define S_TVSTD         "tv_standard"
 #define SIGNAL_CHECK_NS (1000000000ULL)
 #define NO_FRAME_TIMEOUT_NS (3ULL * 1000000000ULL)
 #define AUDIO_CHUNK     1024 /* stereo frames per obs_source_output_audio call */
@@ -35,7 +36,7 @@ struct hdcap_source {
     os_event_t   *restart;          /* signalled when settings change */
 
     pthread_mutex_t settings_lock;
-    int             input, mode, hoff, voff;
+    int             input, mode, hoff, voff, tvstd;
 
     /* stream state (worker thread only) */
     uint64_t last_frame_ns;
@@ -121,7 +122,7 @@ static void *worker(void *data)
         os_event_reset(s->restart);
         pthread_mutex_lock(&s->settings_lock);
         hdcap_input input = (hdcap_input)s->input;
-        int mode_sel = s->mode, hoff = s->hoff, voff = s->voff;
+        int mode_sel = s->mode, hoff = s->hoff, voff = s->voff, tvstd = s->tvstd;
         pthread_mutex_unlock(&s->settings_lock);
 
         hdcap *dev = NULL;
@@ -160,6 +161,12 @@ static void *worker(void *data)
         }
         blog(LOG_INFO, "[usb3hdcap] signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
              sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
+        if (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) {
+            int st = hdcap_setup_sd(dev, (hdcap_std)tvstd, 2000);
+            if (st >= 0)
+                blog(LOG_INFO, "[usb3hdcap] TV standard: %s%s", hdcap_std_name((hdcap_std)st),
+                     tvstd == HDCAP_STD_AUTO ? " (detected)" : " (forced)");
+        }
         if (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI) {
             hdcap_digital_setup ds;
             if ((r = hdcap_setup_digital(dev, 3000, &ds)) < 0)
@@ -245,6 +252,7 @@ static void hdcap_update(void *data, obs_data_t *settings)
     s->mode = (int)obs_data_get_int(settings, S_MODE);
     s->hoff = (int)obs_data_get_int(settings, S_HOFF);
     s->voff = (int)obs_data_get_int(settings, S_VOFF);
+    s->tvstd = (int)obs_data_get_int(settings, S_TVSTD);
     pthread_mutex_unlock(&s->settings_lock);
     os_event_signal(s->restart);
 }
@@ -280,6 +288,7 @@ static void hdcap_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, S_MODE, -1);
     obs_data_set_default_int(settings, S_HOFF, 0);
     obs_data_set_default_int(settings, S_VOFF, 0);
+    obs_data_set_default_int(settings, S_TVSTD, HDCAP_STD_AUTO);
 }
 
 static obs_properties_t *hdcap_properties(void *data)
@@ -298,6 +307,11 @@ static obs_properties_t *hdcap_properties(void *data)
     for (size_t i = 0; i < nm; i++)
         obs_property_list_add_int(md, all[i].name, (long long)i);
     obs_property_set_long_description(md, obs_module_text("AnalogModeHelp"));
+    obs_property_t *sd = obs_properties_add_list(p, S_TVSTD, obs_module_text("TVStandard"), OBS_COMBO_TYPE_LIST,
+                                                 OBS_COMBO_FORMAT_INT);
+    obs_property_list_add_int(sd, obs_module_text("Auto"), HDCAP_STD_AUTO);
+    for (int i = 0; i < HDCAP_STD_AUTO; i++)
+        obs_property_list_add_int(sd, hdcap_std_name((hdcap_std)i), i);
     obs_properties_add_int_slider(p, S_HOFF, obs_module_text("HOffset"), -200, 200, 1);
     obs_properties_add_int_slider(p, S_VOFF, obs_module_text("VOffset"), -60, 60, 1);
     return p;

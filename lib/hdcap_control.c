@@ -286,3 +286,39 @@ int hdcap_setup_digital(hdcap *dev, int timeout_ms, hdcap_digital_setup *o)
     cp = o->embedded_audio ? (cp & ~0x10) : (cp | 0x10);
     return hdcap_i2c_write(dev, HDCAP_I2C_CPLD, 0x20, cp);
 }
+
+/* ---------- SD inputs: TV standard (TW9900 0x1C SDT, 0x1D SDTR) ---------- */
+
+const char *hdcap_std_name(hdcap_std std)
+{
+    static const char *const n[] = { "NTSC-M", "PAL", "SECAM", "NTSC-4.43", "PAL-M", "PAL-CN", "PAL-60", "Auto" };
+    return (unsigned)std < 8 ? n[std] : "?";
+}
+
+int hdcap_setup_sd(hdcap *dev, hdcap_std std, int timeout_ms)
+{
+    int r;
+    uint8_t sdt;
+    if (std != HDCAP_STD_AUTO) {
+        if ((r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x1C, (uint8_t)std)) < 0)
+            return r;
+        return std;
+    }
+    /* Auto: detection can latch a wrong standard if it ran while the source was still settling
+     * (seen with a Dreamcast after power-up: NTSC detected as PAL-60, colour killed). Restart it
+     * now that the signal is locked (SDTR bit 7 ATSTART, keeping all standards enabled) and wait
+     * for SDT bit 7 (DETSTUS) to clear. */
+    if ((r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x1C, HDCAP_STD_AUTO)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x1D, 0xFF)) < 0)
+        return r;
+    for (int waited = 0;; waited += 50) {
+        sleep_ms(50);
+        if ((r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x1C, &sdt)) < 0)
+            return r;
+        if (!(sdt & 0x80) && waited >= 200)
+            break;
+        if (waited >= timeout_ms)
+            break;
+    }
+    return (sdt >> 4) & 7;
+}

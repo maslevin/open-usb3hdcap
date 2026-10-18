@@ -93,6 +93,7 @@ static void usage(void)
             "  -i INPUT  init and select input: hdmi, dvi, vga, component, composite, s-video\n"
             "  -m NAME   analog mode override (substring of a mode name, e.g. \"27 MHz\", \"800x600@60\")\n"
             "  -H N, -V N  analog window offset in samples / lines\n"
+            "  -S STD    TV standard for composite/S-Video: Auto (default), NTSC-M, PAL, SECAM, NTSC-4.43, PAL-M, PAL-CN, PAL-60\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
             "  -t SEC    stream duration (default 5)\n"
             "  -n N      number of frames to save as PPM (default 3)\n"
@@ -107,10 +108,11 @@ int main(int argc, char **argv)
     int nseq = 0, verbose = 0, max_delay = -1, input = -1, hoff = 0, voff = 0;
     double rate = 1.0;
     const char *mode_name = NULL;
+    int tv_std = HDCAP_STD_AUTO;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:i:m:H:V:t:n:o:D:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:i:m:H:V:S:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
@@ -119,6 +121,11 @@ int main(int argc, char **argv)
         case 'v': verbose++; break;
         case 'D': max_delay = atoi(optarg); break;
         case 'm': mode_name = optarg; break;
+        case 'S':
+            for (int k = 0; k <= HDCAP_STD_AUTO; k++)
+                if (!strcasecmp(optarg, hdcap_std_name(k)))
+                    tv_std = k;
+            break;
         case 'H': hoff = atoi(optarg); break;
         case 'V': voff = atoi(optarg); break;
         case 'i':
@@ -163,6 +170,13 @@ int main(int argc, char **argv)
                 r ? "locked" : "NOT locked", sig.standard ? sig.standard : "", sig.standard ? " " : "",
                 sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
                 "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
+        if (r == 1 && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO)) {
+            int st = hdcap_setup_sd(dev, tv_std, 2000);
+            if (st < 0)
+                fprintf(stderr, "TV standard: %s\n", hdcap_strerror(st));
+            else
+                fprintf(stderr, "TV standard: %s%s\n", hdcap_std_name(st), tv_std == HDCAP_STD_AUTO ? " (detected)" : " (forced)");
+        }
         rate = hdcap_estimate_rate(input, &sig, NULL);
         if (r == 1 && (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI)) {
             hdcap_digital_setup ds;

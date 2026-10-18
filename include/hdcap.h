@@ -113,6 +113,19 @@ int hdcap_read_avi(hdcap *dev, hdcap_avi *avi);
  * matrix for the source's format and select embedded or line-in audio. */
 int hdcap_setup_digital(hdcap *dev, int timeout_ms, hdcap_digital_setup *out);
 
+/* ---------- SD inputs (Composite / S-Video): TV standard ---------- */
+
+/* TW9900 standards (SDT register values). HDCAP_STD_AUTO restarts automatic detection. */
+typedef enum {
+    HDCAP_STD_NTSC_M = 0, HDCAP_STD_PAL = 1, HDCAP_STD_SECAM = 2, HDCAP_STD_NTSC_443 = 3,
+    HDCAP_STD_PAL_M = 4, HDCAP_STD_PAL_CN = 5, HDCAP_STD_PAL_60 = 6, HDCAP_STD_AUTO = 7
+} hdcap_std;
+
+const char *hdcap_std_name(hdcap_std std);
+/* After lock on Composite/S-Video: force a standard, or (AUTO) restart detection and wait up to
+ * timeout_ms for it to finish. Returns the standard in use (>= 0) or a negative error. */
+int hdcap_setup_sd(hdcap *dev, hdcap_std std, int timeout_ms);
+
 /* ---------- Analog timing modes (VGA / Component) ---------- */
 
 typedef struct {

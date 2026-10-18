@@ -200,3 +200,12 @@ same line rate and line count as VESA 640×480@60, so it needs a manual choice.
   broke video: short lines and an apparent ~180 MB/s ceiling.
 - **Stream bandwidth:** every line (blanking included) is sent at the active width.
   SuperSpeed alt 2 (32 KiB/125 µs) carries 1080p60 (259.8 MB/s) on this Mac.
+
+### Composite/S-Video standard detection (verified live, Dreamcast composite)
+- The vendor tables set TW9900 SDT 0x1C = 0x07 (auto).
+- After a Dreamcast power-up, auto-detection latched **PAL-60 for an NTSC source**: the colour was
+  killed (U = V = 128 everywhere); forcing PAL-60 showed a chroma checkerboard. Forcing NTSC-M
+  gave correct colour.
+- Restarting detection after lock (SDTR 0x1D bit 7 ATSTART) and waiting for SDT bit 7 (DETSTUS)
+  to clear gives NTSC-M reliably. libhdcap does this by default and offers a manual override
+  (the vendor INF also exposes a standard setting, defaulting to NTSC-M).
