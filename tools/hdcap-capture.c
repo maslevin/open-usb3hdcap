@@ -91,6 +91,8 @@ static void usage(void)
     fprintf(stderr,
             "usage: hdcap-capture [-s seqfile]... [-t seconds] [-n frames] [-o outdir] [-v]\n"
             "  -i INPUT  init and select input: hdmi, vga, component, composite, s-video\n"
+            "  -m NAME   analog mode override (substring of a mode name, e.g. \"27 MHz\", \"800x600@60\")\n"
+            "  -H N, -V N  analog window offset in samples / lines\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
             "  -t SEC    stream duration (default 5)\n"
             "  -n N      number of frames to save as PPM (default 3)\n"
@@ -102,11 +104,12 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     const char *seqs[16];
-    int nseq = 0, verbose = 0, max_delay = -1, input = -1;
+    int nseq = 0, verbose = 0, max_delay = -1, input = -1, hoff = 0, voff = 0;
+    const char *mode_name = NULL;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:i:t:n:o:D:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:i:m:H:V:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
@@ -114,6 +117,9 @@ int main(int argc, char **argv)
         case 'o': c.outdir = optarg; break;
         case 'v': verbose++; break;
         case 'D': max_delay = atoi(optarg); break;
+        case 'm': mode_name = optarg; break;
+        case 'H': hoff = atoi(optarg); break;
+        case 'V': voff = atoi(optarg); break;
         case 'i':
             for (int k = HDCAP_INPUT_HDMI; k <= HDCAP_INPUT_SVIDEO; k++)
                 if (!strcasecmp(optarg, hdcap_input_name(k)) || (k == HDCAP_INPUT_SVIDEO && !strcasecmp(optarg, "svideo")))
@@ -156,6 +162,28 @@ int main(int argc, char **argv)
                 r ? "locked" : "NOT locked", sig.standard ? sig.standard : "", sig.standard ? " " : "",
                 sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
                 "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
+        if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
+            const hdcap_mode *m = NULL;
+            size_t nm;
+            const hdcap_mode *all = hdcap_modes(&nm);
+            if (mode_name) {
+                for (size_t k = 0; k < nm && !m; k++)
+                    if (strstr(all[k].name, mode_name))
+                        m = &all[k];
+                if (!m)
+                    fprintf(stderr, "no mode matching \"%s\"\n", mode_name);
+            } else if (r == 1) {
+                m = hdcap_find_mode(input, &sig);
+            }
+            if (m) {
+                fprintf(stderr, "mode: %s (h-total %d, active %dx%d%s, window start %d/%d, offset %+d/%+d)\n", m->name,
+                        m->htotal, m->hactive, m->vactive, m->interlaced ? " per field" : "", m->hstart, m->vstart, hoff, voff);
+                if ((r = hdcap_set_mode(dev, m, hoff, voff)) < 0)
+                    fprintf(stderr, "set mode: %s\n", hdcap_strerror(r));
+            } else {
+                fprintf(stderr, "mode: none matched; keeping the input table's default sampling\n");
+            }
+        }
     }
     for (int i = 0; i < nseq; i++) {
         fprintf(stderr, "running %s\n", seqs[i]);

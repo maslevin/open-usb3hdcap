@@ -166,3 +166,17 @@ MST3367 measurement (bank 0), verified live on HDMI 720p60 and against captured 
   31.47 kHz).
 - 0x5B/0x5C (11 bits) = lines per frame (750, 525); per field for interlaced sources.
 - 0x55 = status (0x7F on locked HDMI).
+
+### MST3367 analog sampling and crop window (verified live, 2026-10-18)
+Bank 0:
+- 0x01, 0x02[7:4]: ADC PLL divider = h-total − 1 (12 bits).
+- 0x81 + 0x82[7:4]: window horizontal start (sync + back porch − 1).
+- 0x82[3:0] + 0x83: window width. **The width sets the line length in the USB stream** (720 → 1440 B,
+  640 → 1280 B).
+- 0x84: window vertical start (per field).
+- 0x85[5]: interlaced (field) mode.
+- 0x85[3:0] + 0x86: window height (per field).
+
+Captured component 480i (h-start 118 = 62+57−1, v-start 18 = 3+15, height 240 + field flag) matches
+the CEA-861 timing exactly. Sega Dreamcast VGA uses 640 active pixels on an 858-sample, 27 MHz line:
+same line rate and line count as VESA 640×480@60, so it needs a manual choice.

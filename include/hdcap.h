@@ -86,6 +86,24 @@ int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s);
 /* Poll until a stable signal is seen (returns 1), the timeout passes (0), or an error (<0). */
 int hdcap_wait_signal(hdcap *dev, hdcap_input in, int timeout_ms, hdcap_signal *s);
 
+/* ---------- Analog timing modes (VGA / Component) ---------- */
+
+typedef struct {
+    const char *name;
+    int    htotal, hactive, hstart;   /* samples per line; hstart = sync + back porch */
+    int    vtotal, vactive, vstart;   /* lines per frame; vactive/vstart per field if interlaced */
+    double pclk_mhz;
+    int    interlaced;
+    int    family;                    /* 0 = VESA/PC, 1 = CEA-861 video */
+} hdcap_mode;
+
+const hdcap_mode *hdcap_modes(size_t *count);
+/* Best standard mode for a locked analog signal, or NULL. */
+const hdcap_mode *hdcap_find_mode(hdcap_input in, const hdcap_signal *s);
+/* Program the MST3367 sampling PLL (h-total) and crop window to the mode's active area,
+ * shifted by the given offsets (samples / lines). */
+int hdcap_set_mode(hdcap *dev, const hdcap_mode *m, int hoffset, int voffset);
+
 /* ---------- Stream demultiplexing ---------- */
 
 typedef struct {
