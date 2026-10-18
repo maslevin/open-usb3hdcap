@@ -120,3 +120,25 @@ int hdcap_set_mode(hdcap *dev, const hdcap_mode *m, int hoffset, int voffset)
         return r;
     return 0;
 }
+
+double hdcap_estimate_rate(hdcap_input in, const hdcap_signal *s, const hdcap_mode *analog_mode)
+{
+    if (!s->locked)
+        return 0;
+    if (in == HDCAP_INPUT_COMPOSITE || in == HDCAP_INPUT_SVIDEO)
+        return s->hfreq_hz * (1440 + 4) + 48000 * 4.5;
+    const hdcap_mode *m = analog_mode;
+    if (!m) {
+        /* Digital inputs: the source's own active width; take it from the matching standard mode. */
+        hdcap_input as = in == HDCAP_INPUT_COMPONENT ? HDCAP_INPUT_COMPONENT : HDCAP_INPUT_VGA;
+        hdcap_signal t = *s;
+        m = hdcap_find_mode(as, &t);
+        if (!m) {
+            t.interlaced = !t.interlaced; /* digital sources report interlace differently; try both */
+            m = hdcap_find_mode(as, &t);
+        }
+    }
+    if (!m)
+        return 0;
+    return s->hfreq_hz * (2.0 * m->hactive + 4) + 48000 * 4.5;
+}

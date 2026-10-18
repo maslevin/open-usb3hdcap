@@ -63,8 +63,10 @@ typedef enum {
     HDCAP_INPUT_VGA,        /* VGA / DVI-A RGB (MST3367 ADC) */
     HDCAP_INPUT_COMPONENT,  /* YPbPr (MST3367 ADC) */
     HDCAP_INPUT_COMPOSITE,  /* CVBS (TW9900) */
-    HDCAP_INPUT_SVIDEO      /* Y/C (TW9900) */
+    HDCAP_INPUT_SVIDEO,     /* Y/C (TW9900) */
+    HDCAP_INPUT_DVI         /* DVI-D on the DVI-I connector (MST3367 second TMDS port) */
 } hdcap_input;
+#define HDCAP_INPUT_COUNT 6
 
 typedef struct {
     int         locked;      /* stable signal present */
@@ -136,6 +138,12 @@ void hdcap_demux_get_stats(const hdcap_demux *dx, hdcap_demux_stats *st);
 /* Start isochronous streaming. Selects IF0 alt 1 on SuperSpeed (16 KiB per 125 us) or alt 2 on
  * High Speed (3 KiB per 125 us, the most USB 2.0 allows). Payload is fed to the given demuxer. */
 int  hdcap_stream_start(hdcap *dev, hdcap_demux *dx);
+/* Same, choosing the alt setting for an expected stream rate in bytes/s (0 = unknown -> largest).
+ * SuperSpeed: alt 1 carries ~131 MB/s, alt 2 ~262 MB/s. High Speed: alt 2 (~24.6 MB/s). */
+int  hdcap_stream_start_rate(hdcap *dev, hdcap_demux *dx, double bytes_per_sec);
+/* Expected stream rate for a locked signal: every line (blanking included) is sent at the active
+ * width, so rate = line rate x (2 x active width + header) plus audio. 0 if the width is unknown. */
+double hdcap_estimate_rate(hdcap_input in, const hdcap_signal *s, const hdcap_mode *analog_mode);
 /* Pump USB events; call repeatedly. timeout_ms <= 0 means non-blocking. */
 int  hdcap_stream_poll(hdcap *dev, int timeout_ms);
 void hdcap_stream_stop(hdcap *dev);

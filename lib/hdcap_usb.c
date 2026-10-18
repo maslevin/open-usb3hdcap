@@ -196,8 +196,12 @@ int hdcap_run_sequence_ex(hdcap *dev, const char *path, int verbose, int max_del
 
 /* ---------- isochronous streaming ---------- */
 
+static int debug_iso = -1;
+
 static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
 {
+    if (debug_iso < 0)
+        debug_iso = getenv("HDCAP_DEBUG_ISO") != NULL;
     hdcap *dev = t->user_data;
     dev->stats.transfers++;
     if (t->status == LIBUSB_TRANSFER_COMPLETED) {
@@ -213,6 +217,16 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
                 continue;
             }
             dev->stats.bytes += p->actual_length;
+            if (debug_iso) {
+                static unsigned long hist[9];
+                static unsigned long n;
+                hist[p->actual_length * 8 / (unsigned)dev->pkt_size]++;
+                if (++n % 40000 == 0) {
+                    fprintf(stderr, "iso packet size histogram (eighths of %d):", dev->pkt_size);
+                    for (int k = 0; k <= 8; k++) fprintf(stderr, " %lu", hist[k]);
+                    fprintf(stderr, "\n");
+                }
+            }
             hdcap_demux_feed(dev->dx, libusb_get_iso_packet_buffer_simple(t, i), p->actual_length);
         }
     }
@@ -225,8 +239,16 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
 
 int hdcap_stream_start(hdcap *dev, hdcap_demux *dx)
 {
-    /* SuperSpeed: alt 1 (the vendor driver's choice). High Speed: alt 2 is the largest. */
-    int alt = hdcap_link_speed_mbps(dev) >= 5000 ? 1 : 2;
+    return hdcap_stream_start_rate(dev, dx, 1.0); /* small rate: alt 1 on SuperSpeed */
+}
+
+int hdcap_stream_start_rate(hdcap *dev, hdcap_demux *dx, double bytes_per_sec)
+{
+    /* SuperSpeed: alt 1 (16 KiB/125 us) unless the stream needs more, then alt 2 (32 KiB/125 us).
+     * High Speed: alt 2 is the largest (3 KiB/125 us). */
+    int alt = 2;
+    if (hdcap_link_speed_mbps(dev) >= 5000 && bytes_per_sec > 0 && bytes_per_sec < 0.97 * 16384 * 8000)
+        alt = 1;
     int r = hdcap_set_alt(dev, ISO_IFACE, alt);
     if (r < 0)
         return r;

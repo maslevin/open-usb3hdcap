@@ -32,6 +32,7 @@ const char *hdcap_input_name(hdcap_input in)
     case HDCAP_INPUT_COMPONENT: return "Component";
     case HDCAP_INPUT_COMPOSITE: return "Composite";
     case HDCAP_INPUT_SVIDEO:    return "S-Video";
+    case HDCAP_INPUT_DVI:       return "DVI";
     }
     return "?";
 }
@@ -67,7 +68,18 @@ static int gpio45_reset(hdcap *dev)
     return 0;
 }
 
-static int apply_table(hdcap *dev, const hdcap_reg_write *t, size_t n)
+/* DVI-D uses the HDMI setup with two differences (capture c18): MST3367 0x51 bit 3 selects the
+ * second TMDS port (0x81 -> 0x89) and the CPLD routes it with reg 0x01 = 0x01 (HDMI: 0x02). */
+static uint8_t dvi_patch(const hdcap_reg_write *w)
+{
+    if (w->addr == HDCAP_I2C_MST3367 && w->bank == 0x00 && w->reg == 0x51 && w->val == 0x81)
+        return 0x89;
+    if (w->addr == HDCAP_I2C_CPLD && w->reg == 0x01 && w->val == 0x02)
+        return 0x01;
+    return w->val;
+}
+
+static int apply_table(hdcap *dev, const hdcap_reg_write *t, size_t n, int dvi)
 {
     int bank = -1;
     for (size_t i = 0; i < n; i++) {
@@ -79,7 +91,7 @@ static int apply_table(hdcap *dev, const hdcap_reg_write *t, size_t n)
                 return r;
             bank = t[i].bank;
         }
-        if ((r = hdcap_i2c_write(dev, t[i].addr, t[i].reg, t[i].val)) < 0)
+        if ((r = hdcap_i2c_write(dev, t[i].addr, t[i].reg, dvi ? dvi_patch(&t[i]) : t[i].val)) < 0)
             return r;
     }
     return 0;
@@ -90,7 +102,8 @@ int hdcap_select_input(hdcap *dev, hdcap_input in)
     const hdcap_reg_write *t;
     size_t n;
     switch (in) {
-    case HDCAP_INPUT_HDMI:      t = hdcap_table_hdmi;      n = hdcap_table_hdmi_len;      break;
+    case HDCAP_INPUT_HDMI:
+    case HDCAP_INPUT_DVI:       t = hdcap_table_hdmi;      n = hdcap_table_hdmi_len;      break;
     case HDCAP_INPUT_VGA:       t = hdcap_table_vga;       n = hdcap_table_vga_len;       break;
     case HDCAP_INPUT_COMPONENT: t = hdcap_table_component; n = hdcap_table_component_len; break;
     case HDCAP_INPUT_COMPOSITE: t = hdcap_table_composite; n = hdcap_table_composite_len; break;
@@ -100,7 +113,7 @@ int hdcap_select_input(hdcap *dev, hdcap_input in)
     int r = gpio45_reset(dev);
     if (r < 0)
         return r;
-    return apply_table(dev, t, n);
+    return apply_table(dev, t, n, in == HDCAP_INPUT_DVI);
 }
 
 static int mst_read(hdcap *dev, uint8_t bank, uint8_t reg, uint8_t *v)

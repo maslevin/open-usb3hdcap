@@ -160,6 +160,7 @@ static void *worker(void *data)
         }
         blog(LOG_INFO, "[usb3hdcap] signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
              sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
+        const hdcap_mode *applied_mode = NULL;
         if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
             size_t nm;
             const hdcap_mode *all = hdcap_modes(&nm);
@@ -167,6 +168,7 @@ static void *worker(void *data)
             if (m) {
                 blog(LOG_INFO, "[usb3hdcap] analog mode: %s%s, offset %+d/%+d", m->name, mode_sel >= 0 ? " (manual)" : "",
                      hoff, voff);
+                applied_mode = m;
                 if ((r = hdcap_set_mode(dev, m, hoff, voff)) < 0)
                     blog(LOG_WARNING, "[usb3hdcap] set mode failed: %s", hdcap_strerror(r));
             } else {
@@ -177,7 +179,9 @@ static void *worker(void *data)
         uint64_t next_check = os_gettime_ns() + SIGNAL_CHECK_NS;
 
         hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, s);
-        if (!dx || (r = hdcap_stream_start(dev, dx)) < 0) {
+        double rate = hdcap_estimate_rate(input, &sig, applied_mode);
+        blog(LOG_INFO, "[usb3hdcap] expected stream rate %.1f MB/s", rate / 1e6);
+        if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
             blog(LOG_WARNING, "[usb3hdcap] stream start failed: %s", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));
             hdcap_demux_free(dx);
             hdcap_close(dev);
@@ -275,7 +279,7 @@ static obs_properties_t *hdcap_properties(void *data)
     obs_properties_t *p = obs_properties_create();
     obs_property_t *in = obs_properties_add_list(p, S_INPUT, obs_module_text("Input"), OBS_COMBO_TYPE_LIST,
                                                  OBS_COMBO_FORMAT_INT);
-    for (int i = HDCAP_INPUT_HDMI; i <= HDCAP_INPUT_SVIDEO; i++)
+    for (int i = 0; i < HDCAP_INPUT_COUNT; i++)
         obs_property_list_add_int(in, hdcap_input_name((hdcap_input)i), i);
     obs_property_t *md = obs_properties_add_list(p, S_MODE, obs_module_text("AnalogMode"), OBS_COMBO_TYPE_LIST,
                                                  OBS_COMBO_FORMAT_INT);

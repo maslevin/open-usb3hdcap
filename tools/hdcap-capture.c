@@ -90,7 +90,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: hdcap-capture [-s seqfile]... [-t seconds] [-n frames] [-o outdir] [-v]\n"
-            "  -i INPUT  init and select input: hdmi, vga, component, composite, s-video\n"
+            "  -i INPUT  init and select input: hdmi, dvi, vga, component, composite, s-video\n"
             "  -m NAME   analog mode override (substring of a mode name, e.g. \"27 MHz\", \"800x600@60\")\n"
             "  -H N, -V N  analog window offset in samples / lines\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
@@ -105,6 +105,7 @@ int main(int argc, char **argv)
 {
     const char *seqs[16];
     int nseq = 0, verbose = 0, max_delay = -1, input = -1, hoff = 0, voff = 0;
+    double rate = 1.0;
     const char *mode_name = NULL;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
@@ -121,7 +122,7 @@ int main(int argc, char **argv)
         case 'H': hoff = atoi(optarg); break;
         case 'V': voff = atoi(optarg); break;
         case 'i':
-            for (int k = HDCAP_INPUT_HDMI; k <= HDCAP_INPUT_SVIDEO; k++)
+            for (int k = 0; k < HDCAP_INPUT_COUNT; k++)
                 if (!strcasecmp(optarg, hdcap_input_name(k)) || (k == HDCAP_INPUT_SVIDEO && !strcasecmp(optarg, "svideo")))
                     input = k;
             if (input < 0) { usage(); return 2; }
@@ -162,6 +163,7 @@ int main(int argc, char **argv)
                 r ? "locked" : "NOT locked", sig.standard ? sig.standard : "", sig.standard ? " " : "",
                 sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
                 "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
+        rate = hdcap_estimate_rate(input, &sig, NULL);
         if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
             const hdcap_mode *m = NULL;
             size_t nm;
@@ -175,6 +177,7 @@ int main(int argc, char **argv)
             } else if (r == 1) {
                 m = hdcap_find_mode(input, &sig);
             }
+            rate = hdcap_estimate_rate(input, &sig, m);
             if (m) {
                 fprintf(stderr, "mode: %s (h-total %d, active %dx%d%s, window start %d/%d, offset %+d/%+d)\n", m->name,
                         m->htotal, m->hactive, m->vactive, m->interlaced ? " per field" : "", m->hstart, m->vstart, hoff, voff);
@@ -202,7 +205,8 @@ int main(int argc, char **argv)
         wav_header(c.wav, 0);
 
     hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, &c);
-    if (!dx || (r = hdcap_stream_start(dev, dx)) < 0) {
+    fprintf(stderr, "expected stream rate: %.1f MB/s\n", rate / 1e6);
+    if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
         fprintf(stderr, "stream start: %s\n", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));
         hdcap_demux_free(dx);
         hdcap_close(dev);
