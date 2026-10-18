@@ -3,16 +3,14 @@
 /*
  * OBS source for the StarTech USB3HDCAP, built on libhdcap.
  *
- * A worker thread opens the device, selects the configured input, waits for a stable signal, streams,
- * and outputs YUY2 frames and 48 kHz stereo audio to OBS. If the device disappears, the signal is lost
- * or the settings change, the thread starts over.
+ * An hdcap_session (lib/hdcap_session.c) runs the capture loop on its own thread: open the
+ * device, select the configured input, wait for a stable signal, set it up, stream, and start
+ * over when the device disappears, the signal changes or the settings change. This file turns its
+ * callbacks into OBS output: YUY2 frames, and 48 kHz stereo audio resampled to the host clock.
  */
 #include <obs-module.h>
 #include <util/platform.h>
-#include <util/threading.h>
 
-#include <stdatomic.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,22 +24,14 @@ OBS_MODULE_USE_DEFAULT_LOCALE("usb3hdcap", "en-US")
 #define S_HOFF          "h_offset"
 #define S_VOFF          "v_offset"
 #define S_TVSTD         "tv_standard"
-#define SIGNAL_CHECK_NS (1000000000ULL)
-#define NO_FRAME_TIMEOUT_NS (3ULL * 1000000000ULL)
 #define AUDIO_CHUNK     1024 /* stereo frames per obs_source_output_audio call */
 
 struct hdcap_source {
-    obs_source_t *source;
-    pthread_t     thread;
-    bool          thread_running;
-    atomic_bool   stop;
-    os_event_t   *restart;          /* signalled when settings change */
+    obs_source_t  *source;
+    hdcap_session *session;
 
-    pthread_mutex_t settings_lock;
-    int             input, mode, hoff, voff, tvstd;
-
-    /* stream state (worker thread only) */
-    uint64_t last_frame_ns;
+    /* stream state (session worker thread only) */
+    hdcap_session_state state;      /* last reported */
     int16_t  audio[AUDIO_CHUNK * 2];
     size_t   audio_fill;
     uint64_t audio_chunk_ts;        /* timestamp of audio[0] */
@@ -57,8 +47,9 @@ static const char *hdcap_get_name(void *unused)
 
 /* ---------- libhdcap callbacks (worker thread) ---------- */
 
-static void on_frame(const hdcap_frame *f, void *user)
+static void on_frame(const hdcap_frame *f, uint64_t now_ns, void *user)
 {
+    (void)now_ns; /* stamp with OBS's own clock (same timebase on macOS, but don't depend on it) */
     struct hdcap_source *s = user;
     struct obs_source_frame frame = {0};
     frame.format = VIDEO_FORMAT_YUY2;
@@ -73,7 +64,6 @@ static void on_frame(const hdcap_frame *f, void *user)
     if (f->height <= 576) /* SD sources use BT.601 */
         video_format_get_parameters(VIDEO_CS_601, VIDEO_RANGE_PARTIAL, frame.color_matrix,
                                     frame.color_range_min, frame.color_range_max);
-    s->last_frame_ns = frame.timestamp;
     obs_source_output_video(s->source, &frame);
 }
 
@@ -96,9 +86,10 @@ static void flush_audio(struct hdcap_source *s)
  * with arrival timestamps made OBS reset the source's audio timing (an audible skip) whenever
  * sample count and timestamps diverged by 70 ms, every ~5 minutes. The resampler converts to the
  * host's 48 kHz with continuous timestamps that track the true capture time. */
-static void on_audio(const int16_t *samples, size_t count, void *user)
+static void on_audio(const int16_t *samples, size_t count, uint64_t now_ns, void *user)
 {
     struct hdcap_source *s = user;
+    (void)now_ns;
     int16_t out[(2048 + 16) * 2];
     uint64_t now = os_gettime_ns();
     while (count) {
@@ -136,159 +127,51 @@ static void on_audio(const int16_t *samples, size_t count, void *user)
     }
 }
 
-/* ---------- worker thread ---------- */
-
-static bool wait_or_stop(struct hdcap_source *s, unsigned ms)
+static void on_status(const hdcap_session_status *st, void *user)
 {
-    /* Returns true if the thread should exit. A settings change also ends the wait. */
-    os_event_timedwait(s->restart, ms);
-    return atomic_load(&s->stop);
+    struct hdcap_source *s = user;
+    if (st->state == s->state)
+        return;
+    if (s->state == HDCAP_SESSION_STREAMING) {
+        flush_audio(s);
+        obs_source_output_video(s->source, NULL); /* blank the source until frames return */
+    }
+    if (st->state == HDCAP_SESSION_STREAMING) {
+        hdcap_resampler_reset(s->resampler); /* new stream: new audio timeline */
+        s->audio_fill = 0;
+        s->audio_next_log_ns = 0;
+    }
+    if (st->state == HDCAP_SESSION_NO_DEVICE && s->state != HDCAP_SESSION_NO_DEVICE)
+        blog(LOG_INFO, "[usb3hdcap] device not available (%s); waiting for it", st->detail);
+    s->state = st->state;
 }
 
-static void *worker(void *data)
+static void on_log(int level, const char *msg, void *user)
 {
-    struct hdcap_source *s = data;
-    os_set_thread_name("usb3hdcap");
-
-    while (!atomic_load(&s->stop)) {
-        os_event_reset(s->restart);
-        pthread_mutex_lock(&s->settings_lock);
-        hdcap_input input = (hdcap_input)s->input;
-        int mode_sel = s->mode, hoff = s->hoff, voff = s->voff, tvstd = s->tvstd;
-        pthread_mutex_unlock(&s->settings_lock);
-
-        hdcap *dev = NULL;
-        int r = hdcap_open(&dev);
-        if (r < 0) {
-            blog(LOG_INFO, "[usb3hdcap] open: %s; retrying", hdcap_strerror(r));
-            if (wait_or_stop(s, 2000))
-                break;
-            continue;
-        }
-        if ((r = hdcap_init(dev)) < 0 || (r = hdcap_select_input(dev, input)) < 0) {
-            blog(LOG_WARNING, "[usb3hdcap] select %s failed: %s", hdcap_input_name(input), hdcap_strerror(r));
-            hdcap_close(dev);
-            if (wait_or_stop(s, 2000))
-                break;
-            continue;
-        }
-        int mbps = hdcap_link_speed_mbps(dev);
-        if (mbps < 5000)
-            blog(LOG_WARNING, "[usb3hdcap] device is connected at %d Mbit/s, not USB 3 SuperSpeed: only "
-                 "Composite/S-Video fit through USB 2.0. Use a USB 3 port, hub and cable.", mbps);
-        blog(LOG_INFO, "[usb3hdcap] %s selected; waiting for signal", hdcap_input_name(input));
-        hdcap_signal sig;
-        int locked = 0;
-        while (!atomic_load(&s->stop) && os_event_try(s->restart) == EAGAIN) {
-            if ((locked = hdcap_wait_signal(dev, input, 1000, &sig)) != 0)
-                break;
-        }
-        if (locked <= 0) {
-            if (locked < 0)
-                blog(LOG_WARNING, "[usb3hdcap] signal read failed: %s", hdcap_strerror(locked));
-            hdcap_close(dev);
-            if (wait_or_stop(s, 500))
-                break;
-            continue;
-        }
-        blog(LOG_INFO, "[usb3hdcap] signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
-             sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
-        if (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) {
-            int st = hdcap_setup_sd(dev, (hdcap_std)tvstd, 2000);
-            if (st >= 0)
-                blog(LOG_INFO, "[usb3hdcap] TV standard: %s%s", hdcap_std_name((hdcap_std)st),
-                     tvstd == HDCAP_STD_AUTO ? " (detected)" : " (forced)");
-        }
-        if (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI) {
-            hdcap_digital_setup ds;
-            if ((r = hdcap_setup_digital(dev, 3000, &ds)) < 0)
-                blog(LOG_WARNING, "[usb3hdcap] digital setup failed: %s", hdcap_strerror(r));
-            else
-                blog(LOG_INFO, "[usb3hdcap] digital: AVI %s, VIC %d, %s, %s audio", ds.avi.valid ? "present" : "absent",
-                     ds.avi.vic, ds.ycbcr_passthru ? "YCbCr" : ds.full_range ? "RGB full range" : "RGB limited range",
-                     ds.embedded_audio ? "embedded" : "line-in");
-        }
-        const hdcap_mode *applied_mode = NULL;
-        if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
-            size_t nm;
-            const hdcap_mode *all = hdcap_modes(&nm);
-            const hdcap_mode *m = (mode_sel >= 0 && (size_t)mode_sel < nm) ? &all[mode_sel] : hdcap_find_mode(input, &sig);
-            if (m) {
-                blog(LOG_INFO, "[usb3hdcap] analog mode: %s%s, offset %+d/%+d", m->name, mode_sel >= 0 ? " (manual)" : "",
-                     hoff, voff);
-                applied_mode = m;
-                if ((r = hdcap_set_mode(dev, m, hoff, voff)) < 0)
-                    blog(LOG_WARNING, "[usb3hdcap] set mode failed: %s", hdcap_strerror(r));
-            } else {
-                blog(LOG_WARNING, "[usb3hdcap] no standard mode matches this signal; using default sampling");
-            }
-        }
-        hdcap_signal locked_sig = sig;
-        uint64_t next_check = os_gettime_ns() + SIGNAL_CHECK_NS;
-
-        hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, s);
-        double rate = hdcap_estimate_rate(input, &sig, applied_mode);
-        blog(LOG_INFO, "[usb3hdcap] expected stream rate %.1f MB/s", rate / 1e6);
-        hdcap_resampler_reset(s->resampler); /* new stream: new audio timeline */
-        s->audio_next_log_ns = 0;
-        if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
-            blog(LOG_WARNING, "[usb3hdcap] stream start failed: %s", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));
-            hdcap_demux_free(dx);
-            hdcap_close(dev);
-            if (wait_or_stop(s, 2000))
-                break;
-            continue;
-        }
-        blog(LOG_INFO, "[usb3hdcap] streaming");
-        s->last_frame_ns = os_gettime_ns();
-        s->audio_fill = 0;
-        while (!atomic_load(&s->stop) && os_event_try(s->restart) == EAGAIN) {
-            r = hdcap_stream_poll(dev, 100);
-            if (r < 0) {
-                blog(LOG_WARNING, "[usb3hdcap] USB error: %s", hdcap_strerror(r));
-                break;
-            }
-            if (os_gettime_ns() >= next_check) {
-                /* Re-check the signal: a lost lock or a timing change restarts detection. */
-                next_check = os_gettime_ns() + SIGNAL_CHECK_NS;
-                hdcap_signal now;
-                if (hdcap_get_signal(dev, input, &now) == 0 &&
-                    (!now.locked || abs(now.vtotal - locked_sig.vtotal) > 3 ||
-                     fabs(now.hfreq_hz - locked_sig.hfreq_hz) > locked_sig.hfreq_hz * 0.01)) {
-                    blog(LOG_INFO, "[usb3hdcap] signal changed (%d lines, %.3f kHz); restarting", now.vtotal,
-                         now.hfreq_hz / 1000);
-                    obs_source_output_video(s->source, NULL);
-                    break;
-                }
-            }
-            if (os_gettime_ns() - s->last_frame_ns > NO_FRAME_TIMEOUT_NS) {
-                blog(LOG_INFO, "[usb3hdcap] no frames for 3 s; restarting");
-                obs_source_output_video(s->source, NULL); /* blank the source */
-                break;
-            }
-        }
-        hdcap_stream_stop(dev);
-        hdcap_demux_free(dx);
-        hdcap_close(dev);
-        if (wait_or_stop(s, 500))
-            break;
-    }
-    return NULL;
+    (void)user;
+    blog(level == HDCAP_LOG_ERROR ? LOG_ERROR : level == HDCAP_LOG_WARNING ? LOG_WARNING
+         : level == HDCAP_LOG_DEBUG ? LOG_DEBUG : LOG_INFO, "[usb3hdcap] %s", msg);
 }
 
 /* ---------- OBS source callbacks ---------- */
 
+static hdcap_session_config config_from(obs_data_t *settings)
+{
+    hdcap_session_config c = {0};
+    c.input = (hdcap_input)obs_data_get_int(settings, S_INPUT);
+    c.analog_mode = (int)obs_data_get_int(settings, S_MODE);
+    c.h_offset = (int)obs_data_get_int(settings, S_HOFF);
+    c.v_offset = (int)obs_data_get_int(settings, S_VOFF);
+    c.tv_standard = (hdcap_std)obs_data_get_int(settings, S_TVSTD);
+    return c;
+}
+
 static void hdcap_update(void *data, obs_data_t *settings)
 {
     struct hdcap_source *s = data;
-    pthread_mutex_lock(&s->settings_lock);
-    s->input = (int)obs_data_get_int(settings, S_INPUT);
-    s->mode = (int)obs_data_get_int(settings, S_MODE);
-    s->hoff = (int)obs_data_get_int(settings, S_HOFF);
-    s->voff = (int)obs_data_get_int(settings, S_VOFF);
-    s->tvstd = (int)obs_data_get_int(settings, S_TVSTD);
-    pthread_mutex_unlock(&s->settings_lock);
-    os_event_signal(s->restart);
+    hdcap_session_config c = config_from(settings);
+    if (s->session)
+        hdcap_session_set_config(s->session, &c);   /* restarts the capture loop */
 }
 
 static void *hdcap_create(obs_data_t *settings, obs_source_t *source)
@@ -296,24 +179,19 @@ static void *hdcap_create(obs_data_t *settings, obs_source_t *source)
     struct hdcap_source *s = bzalloc(sizeof(*s));
     s->source = source;
     s->resampler = hdcap_resampler_new();
-    pthread_mutex_init(&s->settings_lock, NULL);
-    os_event_init(&s->restart, OS_EVENT_TYPE_MANUAL);
-    atomic_init(&s->stop, false);
-    hdcap_update(s, settings);
-    if (pthread_create(&s->thread, NULL, worker, s) == 0)
-        s->thread_running = true;
+    s->state = HDCAP_SESSION_STARTING;
+    hdcap_session_config c = config_from(settings);
+    hdcap_session_callbacks cb = { on_frame, on_audio, on_status, on_log, s };
+    s->session = hdcap_session_start(&c, &cb);
+    if (!s->session)
+        blog(LOG_ERROR, "[usb3hdcap] could not start the capture session");
     return s;
 }
 
 static void hdcap_destroy(void *data)
 {
     struct hdcap_source *s = data;
-    atomic_store(&s->stop, true);
-    os_event_signal(s->restart);
-    if (s->thread_running)
-        pthread_join(s->thread, NULL);
-    os_event_destroy(s->restart);
-    pthread_mutex_destroy(&s->settings_lock);
+    hdcap_session_stop(s->session);   /* joins the worker: no callbacks after this */
     hdcap_resampler_free(s->resampler);
     bfree(s);
 }

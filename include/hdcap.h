@@ -184,7 +184,8 @@ int  hdcap_stream_start_rate(hdcap *dev, hdcap_demux *dx, double bytes_per_sec);
 /* Expected stream rate for a locked signal: every line (blanking included) is sent at the active
  * width, so rate = line rate x (2 x active width + header) plus audio. 0 if the width is unknown. */
 double hdcap_estimate_rate(hdcap_input in, const hdcap_signal *s, const hdcap_mode *analog_mode);
-/* Pump USB events; call repeatedly. timeout_ms <= 0 means non-blocking. */
+/* Pump USB events; call repeatedly. timeout_ms <= 0 means non-blocking. Returns < 0 once the
+ * stream has failed for good (device unplugged, transfers refused): stop and reopen. */
 int  hdcap_stream_poll(hdcap *dev, int timeout_ms);
 void hdcap_stream_stop(hdcap *dev);
 

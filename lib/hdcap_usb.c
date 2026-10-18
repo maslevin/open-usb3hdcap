@@ -29,6 +29,8 @@ struct hdcap {
     int                     pkt_size;
     int                     streaming;
     int                     in_flight;
+    int                     fatal;          /* streaming failed (device gone, resubmit refused) */
+    int                     xfer_errors;    /* consecutive failed transfers */
     hdcap_demux            *dx;
     hdcap_stream_stats      stats;
 };
@@ -210,6 +212,14 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
     }
     hdcap *dev = t->user_data;
     dev->stats.transfers++;
+    /* Unplugging shows up as NO_DEVICE, or (macOS) as a run of failed transfers / refused
+     * resubmits; report it through hdcap_stream_poll instead of waiting for a frame timeout. */
+    if (t->status == LIBUSB_TRANSFER_NO_DEVICE)
+        dev->fatal = LIBUSB_ERROR_NO_DEVICE;
+    else if (t->status == LIBUSB_TRANSFER_COMPLETED)
+        dev->xfer_errors = 0;
+    else if (t->status != LIBUSB_TRANSFER_CANCELLED && ++dev->xfer_errors > 2 * ISO_TRANSFERS)
+        dev->fatal = LIBUSB_ERROR_IO;
     if (t->status == LIBUSB_TRANSFER_COMPLETED) {
         for (int i = 0; i < t->num_iso_packets; i++) {
             struct libusb_iso_packet_descriptor *p = &t->iso_packet_desc[i];
@@ -238,9 +248,11 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *t)
             hdcap_demux_feed(dev->dx, libusb_get_iso_packet_buffer_simple(t, i), p->actual_length);
         }
     }
-    if (dev->streaming && t->status != LIBUSB_TRANSFER_CANCELLED && t->status != LIBUSB_TRANSFER_NO_DEVICE) {
-        if (libusb_submit_transfer(t) == 0)
+    if (dev->streaming && !dev->fatal && t->status != LIBUSB_TRANSFER_CANCELLED) {
+        int r = libusb_submit_transfer(t);
+        if (r == 0)
             return;
+        dev->fatal = r;
     }
     dev->in_flight--;
 }
@@ -268,6 +280,8 @@ int hdcap_stream_start_rate(hdcap *dev, hdcap_demux *dx, double bytes_per_sec)
         return dev->pkt_size ? dev->pkt_size : LIBUSB_ERROR_OTHER;
     dev->dx = dx;
     dev->streaming = 1;
+    dev->fatal = 0;
+    dev->xfer_errors = 0;
     memset(&dev->stats, 0, sizeof dev->stats);
     for (int i = 0; i < ISO_TRANSFERS; i++) {
         size_t len = (size_t)dev->pkt_size * ISO_PACKETS;
@@ -291,7 +305,14 @@ int hdcap_stream_poll(hdcap *dev, int timeout_ms)
     struct timeval tv = { timeout_ms / 1000, (timeout_ms % 1000) * 1000 };
     if (timeout_ms <= 0)
         tv.tv_sec = tv.tv_usec = 0;
-    return libusb_handle_events_timeout_completed(dev->ctx, &tv, NULL);
+    int r = libusb_handle_events_timeout_completed(dev->ctx, &tv, NULL);
+    if (r < 0)
+        return r;
+    if (dev->fatal)
+        return dev->fatal;
+    if (dev->streaming && dev->in_flight == 0)
+        return LIBUSB_ERROR_IO;   /* every transfer has retired: nothing more will arrive */
+    return 0;
 }
 
 void hdcap_stream_stop(hdcap *dev)

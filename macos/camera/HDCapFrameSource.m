@@ -207,8 +207,12 @@ static NSDictionary *aperture(int w, int h)
     CVPixelBufferCreateWithIOSurface(NULL, surf, NULL, &src);
     CFRelease(surf);
     if (!src) return;
-    /* hdcapd output is BT.709/601 per input; tag as 709 (HD inputs) for the converter. */
-    CVBufferSetAttachment(src, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, kCVAttachmentMode_ShouldPropagate);
+    /* hdcapd passes the source's YCbCr through: BT.601 for SD (<= 576 lines: analog decoders, SD
+     * HDMI/component), BT.709 for HD, the same rule as the OBS plugin. VideoToolbox converts to the
+     * BT.709 output; a wrong tag shows SD colours oversaturated and hue-shifted. */
+    CVBufferSetAttachment(src, kCVImageBufferYCbCrMatrixKey,
+                          CVPixelBufferGetHeight(src) <= 576 ? kCVImageBufferYCbCrMatrix_ITU_R_601_4 : kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                          kCVAttachmentMode_ShouldPropagate);
     [self setUpGeometryForSourceWidth:(int)CVPixelBufferGetWidth(src) height:(int)CVPixelBufferGetHeight(src)];
     CVBufferSetAttachment(src, kCVImageBufferCleanApertureKey, (__bridge CFDictionaryRef)_srcAperture, kCVAttachmentMode_ShouldNotPropagate);
     if (CVPixelBufferPoolCreatePixelBuffer(NULL, _pool, &dst) == kCVReturnSuccess &&

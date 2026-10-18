@@ -34,6 +34,7 @@ add_library(usb3hdcap MODULE
   ../lib/hdcap_control.c
   ../lib/hdcap_tables.c
   ../lib/hdcap_modes.c
+  ../lib/hdcap_session.c
   ../lib/hdcap_resample.c)
 # libobs headers need SIMDe (brew install simde)
 find_path(SIMDE_INCLUDE_DIR simde/x86/sse2.h REQUIRED)
