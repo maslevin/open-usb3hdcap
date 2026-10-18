@@ -4,8 +4,10 @@ An open-source, user-space driver for the **StarTech USB3HDCAP** USB 3.0 capture
 (YUAN UB-530 design, USB ID `1164:F533`): HDMI, DVI, VGA, Component, Composite and S-Video,
 with stereo audio.
 
-Status: **working on macOS for HDMI** (Intel, macOS 15.8, OBS 32.2.2): 1280×720 at 60 fps with
-48 kHz stereo audio, via `hdcap-capture` and the OBS plugin. Input selection (HDMI, VGA, Component,
+Status: **working on macOS** (Intel, macOS 15.8, OBS 32.2.2), verified live in OBS:
+HDMI 1280×720p60 with 48 kHz stereo audio, and VGA 640×480@60 (shown as 720×480), switchable from
+the source's Input setting. Requires a USB 3 (SuperSpeed) connection: on USB 2.0 only SD
+composite/S-Video can fit. Input selection (HDMI, VGA, Component,
 Composite, S-Video) and signal detection are implemented. The per-input register tables were recorded
 from the vendor driver with one source mode each (see `lib/hdcap_tables.c`), so analog inputs are
 only expected to work for those timings until per-mode setup is derived. The demuxer is validated on
