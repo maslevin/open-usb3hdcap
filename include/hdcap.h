@@ -52,6 +52,36 @@ int hdcap_run_sequence(hdcap *dev, const char *path, int verbose);
 /* Same, but every `delay` is capped at max_delay_ms (negative = no cap). */
 int hdcap_run_sequence_ex(hdcap *dev, const char *path, int verbose, int max_delay_ms);
 
+/* ---------- Inputs and signal ---------- */
+
+typedef enum {
+    HDCAP_INPUT_HDMI,       /* HDMI / DVI-D (MST3367 digital) */
+    HDCAP_INPUT_VGA,        /* VGA / DVI-A RGB (MST3367 ADC) */
+    HDCAP_INPUT_COMPONENT,  /* YPbPr (MST3367 ADC) */
+    HDCAP_INPUT_COMPOSITE,  /* CVBS (TW9900) */
+    HDCAP_INPUT_SVIDEO      /* Y/C (TW9900) */
+} hdcap_input;
+
+typedef struct {
+    int         locked;      /* stable signal present */
+    int         interlaced;
+    int         vtotal;      /* lines per frame (per field for interlaced MST3367 sources) */
+    double      hfreq_hz;
+    double      vfreq_hz;    /* frame (or field) rate */
+    const char *standard;    /* analog SD standard (TW9900 inputs), else NULL */
+    uint8_t     raw[5];      /* status registers, for debugging */
+} hdcap_signal;
+
+const char *hdcap_input_name(hdcap_input in);
+/* One-time device init after open: fixed requests and capability probes. */
+int hdcap_init(hdcap *dev);
+/* Reset the front end and configure every chip for the given input (blocks for ~0.3-3 s). */
+int hdcap_select_input(hdcap *dev, hdcap_input in);
+/* Read the current signal state for the selected input. */
+int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s);
+/* Poll until a stable signal is seen (returns 1), the timeout passes (0), or an error (<0). */
+int hdcap_wait_signal(hdcap *dev, hdcap_input in, int timeout_ms, hdcap_signal *s);
+
 /* ---------- Stream demultiplexing ---------- */
 
 typedef struct {

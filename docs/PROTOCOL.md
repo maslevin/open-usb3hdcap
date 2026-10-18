@@ -140,3 +140,29 @@ no immediate traffic in c05.
 - Switching the app's audio source (embedded → line in) produced **no I2C or control traffic**
   in c05. Either the change is host-side, or it takes effect at the next stream start.
 - During Composite with no source, the stream stayed off (alt 0) and only the decoder at 0x88 was polled.
+
+## Register meanings used by libhdcap (2026-10-18)
+
+TW9900 (public datasheet FN7767 rev 5.00):
+- 0x01 STATUS1: bit 7 VDLOSS, bit 6 HLOCK, bit 5 SLOCK, bit 3 VLOCK, bit 1 MONO, bit 0 DET50.
+- 0x02 INFORM: bit 6 FC27 (27 MHz), bits 5-4 IFSEL (00 composite, 01 S-Video), bits 3-2 YSEL.
+  Captured values: 0x40 composite, 0x54 S-Video.
+- 0x06 ACNTL: bit 7 soft reset; bits 3/2/1 clock, luma ADC and chroma ADC power-down.
+  0x0E = idle/powered down; 0x42 composite (chroma ADC off); 0x40 S-Video.
+- 0x1C SDT: bits 6-4 detected standard; bits 2-0 = 7 means auto-detect.
+
+CS53L21 (public datasheet DS700F2), as written before streaming:
+- 0x03=0x4E: mic preamps and bias powered down.
+- 0x04=0x44 then 0x46: master mode, I2S, then DIGMIX.
+- 0x07=0x00: AIN1 inputs, not muted.
+- 0x0A-0x0D=0x00: 0 dB.
+- 0x0E/0x0F=0x05: ADC mixer volume.
+- 0x18=0x00: channel mixer.
+- 0x1C=0xC0: ALC enable bits.
+- 0xFF is not a CS53L21 register.
+
+MST3367 measurement (bank 0), verified live on HDMI 720p60 and against captured VGA 640x480:
+- 0x57/0x58 (12 bits) = line period in counts of a ~160.15 MHz reference (3559 at 45.0 kHz, 5089 at
+  31.47 kHz).
+- 0x5B/0x5C (11 bits) = lines per frame (750, 525); per field for interlaced sources.
+- 0x55 = status (0x7F on locked HDMI).

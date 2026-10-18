@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -89,6 +90,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: hdcap-capture [-s seqfile]... [-t seconds] [-n frames] [-o outdir] [-v]\n"
+            "  -i INPUT  init and select input: hdmi, vga, component, composite, s-video\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
             "  -t SEC    stream duration (default 5)\n"
             "  -n N      number of frames to save as PPM (default 3)\n"
@@ -100,11 +102,11 @@ static void usage(void)
 int main(int argc, char **argv)
 {
     const char *seqs[16];
-    int nseq = 0, verbose = 0, max_delay = -1;
+    int nseq = 0, verbose = 0, max_delay = -1, input = -1;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:t:n:o:D:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:i:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
@@ -112,6 +114,12 @@ int main(int argc, char **argv)
         case 'o': c.outdir = optarg; break;
         case 'v': verbose++; break;
         case 'D': max_delay = atoi(optarg); break;
+        case 'i':
+            for (int k = HDCAP_INPUT_HDMI; k <= HDCAP_INPUT_SVIDEO; k++)
+                if (!strcasecmp(optarg, hdcap_input_name(k)) || (k == HDCAP_INPUT_SVIDEO && !strcasecmp(optarg, "svideo")))
+                    input = k;
+            if (input < 0) { usage(); return 2; }
+            break;
         default: usage(); return 2;
         }
     }
@@ -125,6 +133,26 @@ int main(int argc, char **argv)
     if (r < 0) {
         fprintf(stderr, "open: %s\n", hdcap_strerror(r));
         return 1;
+    }
+    if (input >= 0) {
+        hdcap_signal sig;
+        double t0 = now();
+        if ((r = hdcap_init(dev)) < 0 || (r = hdcap_select_input(dev, input)) < 0) {
+            fprintf(stderr, "init/select %s: %s\n", hdcap_input_name(input), hdcap_strerror(r));
+            hdcap_close(dev);
+            return 1;
+        }
+        fprintf(stderr, "selected %s in %.2f s; waiting for signal\n", hdcap_input_name(input), now() - t0);
+        r = hdcap_wait_signal(dev, input, 5000, &sig);
+        if (r < 0) {
+            fprintf(stderr, "signal: %s\n", hdcap_strerror(r));
+            hdcap_close(dev);
+            return 1;
+        }
+        fprintf(stderr, "signal %s: %s%s%d lines, %.3f kHz, %.2f Hz%s%s  [raw %02x %02x %02x %02x %02x]\n",
+                r ? "locked" : "NOT locked", sig.standard ? sig.standard : "", sig.standard ? " " : "",
+                sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
+                "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
     }
     for (int i = 0; i < nseq; i++) {
         fprintf(stderr, "running %s\n", seqs[i]);

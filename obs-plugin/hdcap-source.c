@@ -1,9 +1,9 @@
 /*
  * OBS source for the StarTech USB3HDCAP, built on libhdcap.
  *
- * A worker thread opens the device, runs the startup sequence (for now a recorded HDMI sequence,
- * see sequences/README.md), streams, and outputs YUY2 frames and 48 kHz stereo audio to OBS.
- * If the device disappears or stops delivering frames, the thread reconnects.
+ * A worker thread opens the device, selects the configured input, waits for a stable signal, streams,
+ * and outputs YUY2 frames and 48 kHz stereo audio to OBS. If the device disappears, the signal is lost
+ * or the settings change, the thread starts over.
  */
 #include <obs-module.h>
 #include <util/platform.h>
@@ -17,8 +17,7 @@
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("usb3hdcap", "en-US")
 
-#define S_SEQUENCE      "sequence"
-#define S_MAX_DELAY     "max_delay_ms"
+#define S_INPUT         "input"
 #define NO_FRAME_TIMEOUT_NS (3ULL * 1000000000ULL)
 #define AUDIO_CHUNK     1024 /* stereo frames per obs_source_output_audio call */
 
@@ -30,8 +29,7 @@ struct hdcap_source {
     os_event_t   *restart;          /* signalled when settings change */
 
     pthread_mutex_t settings_lock;
-    char           *sequence;
-    int             max_delay_ms;
+    int             input;
 
     /* stream state (worker thread only) */
     uint64_t last_frame_ns;
@@ -116,29 +114,41 @@ static void *worker(void *data)
     while (!atomic_load(&s->stop)) {
         os_event_reset(s->restart);
         pthread_mutex_lock(&s->settings_lock);
-        char *seq = bstrdup(s->sequence);
-        int max_delay = s->max_delay_ms;
+        hdcap_input input = (hdcap_input)s->input;
         pthread_mutex_unlock(&s->settings_lock);
 
         hdcap *dev = NULL;
         int r = hdcap_open(&dev);
         if (r < 0) {
             blog(LOG_INFO, "[usb3hdcap] open: %s; retrying", hdcap_strerror(r));
-            bfree(seq);
             if (wait_or_stop(s, 2000))
                 break;
             continue;
         }
-        blog(LOG_INFO, "[usb3hdcap] device opened; running %s", seq ? seq : "(none)");
-        if (seq && *seq && (r = hdcap_run_sequence_ex(dev, seq, 0, max_delay)) < 0) {
-            blog(LOG_WARNING, "[usb3hdcap] sequence failed: %s", hdcap_strerror(r));
+        if ((r = hdcap_init(dev)) < 0 || (r = hdcap_select_input(dev, input)) < 0) {
+            blog(LOG_WARNING, "[usb3hdcap] select %s failed: %s", hdcap_input_name(input), hdcap_strerror(r));
             hdcap_close(dev);
-            bfree(seq);
             if (wait_or_stop(s, 2000))
                 break;
             continue;
         }
-        bfree(seq);
+        blog(LOG_INFO, "[usb3hdcap] %s selected; waiting for signal", hdcap_input_name(input));
+        hdcap_signal sig;
+        int locked = 0;
+        while (!atomic_load(&s->stop) && os_event_try(s->restart) == EAGAIN) {
+            if ((locked = hdcap_wait_signal(dev, input, 1000, &sig)) != 0)
+                break;
+        }
+        if (locked <= 0) {
+            if (locked < 0)
+                blog(LOG_WARNING, "[usb3hdcap] signal read failed: %s", hdcap_strerror(locked));
+            hdcap_close(dev);
+            if (wait_or_stop(s, 500))
+                break;
+            continue;
+        }
+        blog(LOG_INFO, "[usb3hdcap] signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
+             sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
 
         hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, s);
         if (!dx || (r = hdcap_stream_start(dev, dx)) < 0) {
@@ -179,9 +189,7 @@ static void hdcap_update(void *data, obs_data_t *settings)
 {
     struct hdcap_source *s = data;
     pthread_mutex_lock(&s->settings_lock);
-    bfree(s->sequence);
-    s->sequence = bstrdup(obs_data_get_string(settings, S_SEQUENCE));
-    s->max_delay_ms = (int)obs_data_get_int(settings, S_MAX_DELAY);
+    s->input = (int)obs_data_get_int(settings, S_INPUT);
     pthread_mutex_unlock(&s->settings_lock);
     os_event_signal(s->restart);
 }
@@ -208,25 +216,22 @@ static void hdcap_destroy(void *data)
         pthread_join(s->thread, NULL);
     os_event_destroy(s->restart);
     pthread_mutex_destroy(&s->settings_lock);
-    bfree(s->sequence);
     bfree(s);
 }
 
 static void hdcap_defaults(obs_data_t *settings)
 {
-    char *seq = obs_module_file("sequences/open_hdmi.seq");
-    obs_data_set_default_string(settings, S_SEQUENCE, seq ? seq : "");
-    bfree(seq);
-    obs_data_set_default_int(settings, S_MAX_DELAY, 10);
+    obs_data_set_default_int(settings, S_INPUT, HDCAP_INPUT_HDMI);
 }
 
 static obs_properties_t *hdcap_properties(void *data)
 {
     UNUSED_PARAMETER(data);
     obs_properties_t *p = obs_properties_create();
-    obs_properties_add_path(p, S_SEQUENCE, obs_module_text("StartupSequence"), OBS_PATH_FILE,
-                            "Sequence files (*.seq)", NULL);
-    obs_properties_add_int(p, S_MAX_DELAY, obs_module_text("MaxDelay"), 0, 2000, 10);
+    obs_property_t *in = obs_properties_add_list(p, S_INPUT, obs_module_text("Input"), OBS_COMBO_TYPE_LIST,
+                                                 OBS_COMBO_FORMAT_INT);
+    for (int i = HDCAP_INPUT_HDMI; i <= HDCAP_INPUT_SVIDEO; i++)
+        obs_property_list_add_int(in, hdcap_input_name((hdcap_input)i), i);
     return p;
 }
 

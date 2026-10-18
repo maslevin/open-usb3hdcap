@@ -18,7 +18,9 @@ pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
 add_library(usb3hdcap MODULE
   hdcap-source.c
   ../lib/hdcap_usb.c
-  ../lib/hdcap_demux.c)
+  ../lib/hdcap_demux.c
+  ../lib/hdcap_control.c
+  ../lib/hdcap_tables.c)
 # libobs headers need SIMDe (brew install simde)
 find_path(SIMDE_INCLUDE_DIR simde/x86/sse2.h REQUIRED)
 target_include_directories(usb3hdcap PRIVATE ../include "${LIBOBS_INCLUDE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated" "${SIMDE_INCLUDE_DIR}")
@@ -41,11 +43,11 @@ set_target_properties(usb3hdcap PROPERTIES
   MACOSX_BUNDLE_GUI_IDENTIFIER org.open-usb3hdcap.obs-plugin
   INSTALL_RPATH "@executable_path/../Frameworks")
 
-# Bundle resources: locale and the bootstrap startup sequence.
+# Bundle resources: locale (en-GB shares the en-US strings).
 set(RES "$<TARGET_BUNDLE_CONTENT_DIR:usb3hdcap>/Resources")
 add_custom_command(TARGET usb3hdcap POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${RES}/locale" "${RES}/sequences"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${RES}/locale"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/"
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../sequences/open_hdmi.seq" "${RES}/sequences/")
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/en-GB.ini")
 
 install(TARGETS usb3hdcap LIBRARY DESTINATION "$ENV{HOME}/Library/Application Support/obs-studio/plugins")
