@@ -186,9 +186,19 @@ Several MST3367/TW9900 details below were cross-checked against **mlaux/usb3hdca
 GPL-2.0 Linux driver for this card). Each was verified against our captures or the datasheets as
 noted, and no code was taken (see the project's research notes for the full comparison).
 
+### HDCP (verified 2026-10-19)
+- Bank 1 `0x01` bits 2:0 report the link type (per hdcapm): `x00` DVI, `1x0` HDMI without HDCP,
+  `101` HDMI + HDCP, `111` HDMI + HDCP with advanced cipher. Bit 0 set means HDCP is in use. A Roku
+  (which encrypts even its home screen) read `0x8D`; a Genesis Mini (no HDCP) leaves bit 0 clear.
+- Bank 1 `0x24`: `0x40` enables the receiver's HDCP (as in the Windows tables), `0x41` disables it.
+- **Driver policy:** libhdcap writes `0x41`, so the device never decrypts HDCP content; sources that
+  require HDCP withhold protected video. As a second layer, `hdcap_hdcp_status()` (bank 1 `0x01`
+  bit 0, `0x34` bit 7) is checked before the first frame and every 250 ms, and while HDCP is active
+  the capture shows an "HDCP-protected source / capture blocked" notice with silent audio. Verified:
+  the Roku is blocked with the notice; the Genesis Mini captures normally.
+
 Further hdcapm claims, not yet checked here: bank 0 0x50 = chip revision 1; 0x55 & 0x3C = TMDS signal
-present; 0xB7 bit 1 = hot-plug off; 0xB8 0x10→0x00 HDCP reset; bank 2 0x07 0xF4→0x04 HDMI core reset;
-bank 1 0x01 bit 2 HDMI (vs DVI) and bit 0 HDCP active, bank 1 0x34 bit 7 HDCP.
+present; 0xB7 bit 1 = hot-plug off; 0xB8 0x10→0x00 HDCP reset; bank 2 0x07 0xF4→0x04 HDMI core reset; bank 1 0x34 bit 7 HDCP.
 
 ### MST3367 analog front end by pixel clock (2026-10-19)
 Bank 0: 0x03 PLL gain, 0x05/0x06 clamp delay/width, 0x07 sync output width, 0x39 clamp level

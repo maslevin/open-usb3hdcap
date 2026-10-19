@@ -12,7 +12,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 OBSV=${OBS_HEADERS_VERSION:-30.0.0}
-VER=${USB3HDCAP_VERSION:-0.3.0-$(git rev-parse --short HEAD)}
+VER=${USB3HDCAP_VERSION:-0.3.1-$(git rev-parse --short HEAD)}
 IDENT=${SIGN_IDENTITY:--}
 
 [ -f third_party/libusb-universal/lib/libusb-1.0.0.dylib ] || packaging/build-libusb-universal.sh
