@@ -12,7 +12,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 OBSV=${OBS_HEADERS_VERSION:-30.0.0}
-VER=${USB3HDCAP_VERSION:-0.1.0-$(git rev-parse --short HEAD)}
+VER=${USB3HDCAP_VERSION:-0.3.0-$(git rev-parse --short HEAD)}
 IDENT=${SIGN_IDENTITY:--}
 
 [ -f third_party/libusb-universal/lib/libusb-1.0.0.dylib ] || packaging/build-libusb-universal.sh
@@ -47,5 +47,6 @@ ditto "$P" "dist/$NAME/usb3hdcap.plugin"
 cp packaging/install.sh "dist/$NAME/install.sh"
 cp packaging/INSTALL.md "dist/$NAME/INSTALL.md"
 cp LICENSE "dist/$NAME/LICENSE"
+cp NOTICE "dist/$NAME/NOTICE"
 (cd dist && ditto -c -k --keepParent "$NAME" "$NAME.zip")
 echo "dist/$NAME.zip  (signed: $([ "$IDENT" = "-" ] && echo ad-hoc || echo "$IDENT"), headers: OBS $OBSV)"

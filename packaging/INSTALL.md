@@ -19,7 +19,8 @@ An open-source OBS source for the **StarTech USB3HDCAP** USB 3.0 capture card
    ./install.sh
    ```
 
-   This copies `usb3hdcap.plugin` to `~/Library/Application Support/obs-studio/plugins/`.
+   It first shows the [NOTICE](../NOTICE) (no warranty, limitation of liability) and asks you to
+   accept it. It then copies `usb3hdcap.plugin` to `~/Library/Application Support/obs-studio/plugins/`.
    The plugin is not notarized, so the script also removes the download quarantine flag;
    otherwise macOS would block it from loading.
 

@@ -86,6 +86,7 @@ add_custom_command(TARGET usb3hdcap POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/data/locale/en-US.ini" "${RES}/locale/en-GB.ini"
   COMMAND ${CMAKE_COMMAND} -E make_directory "${RES}/licenses"
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE" "${RES}/licenses/LICENSE.open-usb3hdcap")
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE" "${RES}/licenses/LICENSE.open-usb3hdcap"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../NOTICE" "${RES}/licenses/NOTICE.open-usb3hdcap")
 
 install(TARGETS usb3hdcap LIBRARY DESTINATION "$ENV{HOME}/Library/Application Support/obs-studio/plugins")
