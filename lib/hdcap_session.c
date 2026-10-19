@@ -32,6 +32,7 @@ struct hdcap_session {
     pthread_cond_t  cond;
     int             stop;
     int             restart;           /* set when the configuration changes */
+    int             picture_dirty;     /* only the SD picture settings changed */
     hdcap_session_config cfg;
     hdcap_session_status status;       /* guarded by lock */
     /* worker-only */
@@ -138,6 +139,19 @@ static void on_audio(const int16_t *samples, size_t count, void *user)
         s->cb.on_audio(samples, count, hdcap_now_ns(), s->cb.user);
 }
 
+/* Composite/S-Video picture settings from the current configuration. */
+static void apply_picture(hdcap_session *s, hdcap *dev)
+{
+    static const hdcap_picture defaults = HDCAP_PICTURE_DEFAULTS;
+    pthread_mutex_lock(&s->lock);
+    hdcap_picture p = s->cfg.picture_set ? s->cfg.picture : defaults;
+    s->picture_dirty = 0;
+    pthread_mutex_unlock(&s->lock);
+    int r = hdcap_set_picture(dev, &p);
+    if (r < 0)
+        logf_(s, HDCAP_LOG_WARNING, "picture settings: %s", hdcap_strerror(r));
+}
+
 static void *worker(void *data)
 {
     hdcap_session *s = data;
@@ -207,6 +221,7 @@ static void *worker(void *data)
 
         if (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) {
             int st = hdcap_setup_sd(dev, cfg.tv_standard, 2000);
+            apply_picture(s, dev);
             if (st >= 0) {
                 logf_(s, HDCAP_LOG_INFO, "TV standard: %s%s", hdcap_std_name((hdcap_std)st),
                       cfg.tv_standard == HDCAP_STD_AUTO ? " (detected)" : " (forced)");
@@ -233,7 +248,7 @@ static void *worker(void *data)
                 logf_(s, HDCAP_LOG_INFO, "analog mode: %s%s, offset %+d/%+d", m->name, cfg.analog_mode >= 0 ? " (manual)" : "",
                       cfg.h_offset, cfg.v_offset);
                 applied = m;
-                if ((r = hdcap_set_mode(dev, m, cfg.h_offset, cfg.v_offset)) < 0)
+                if ((r = hdcap_set_mode(dev, input, m, cfg.h_offset, cfg.v_offset)) < 0)
                     logf_(s, HDCAP_LOG_WARNING, "set mode failed: %s", hdcap_strerror(r));
                 snprintf(detail, sizeof detail, "%s", m->name);
             } else {
@@ -243,6 +258,11 @@ static void *worker(void *data)
 
         hdcap_signal locked_sig = sig;
         hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, s);
+        if (dx && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) && !sig.interlaced) {
+            hdcap_demux_set_line_double(dx, 1);
+            logf_(s, HDCAP_LOG_INFO, "progressive %dp source: line-doubled to %d lines", sig.vtotal == 312 ? 288 : 240,
+                  sig.vtotal == 312 ? 576 : 480);
+        }
         double rate = hdcap_estimate_rate(input, &sig, applied);
         logf_(s, HDCAP_LOG_INFO, "expected stream rate %.1f MB/s", rate / 1e6);
         if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
@@ -260,6 +280,8 @@ static void *worker(void *data)
         set_status(s, HDCAP_SESSION_STREAMING, &sig, detail);
         uint64_t next_check = hdcap_now_ns() + SIGNAL_CHECK_NS;
         while (!should_leave(s)) {
+            if (s->picture_dirty && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO))
+                apply_picture(s, dev);
             if ((r = hdcap_stream_poll(dev, 100)) < 0) {
                 logf_(s, HDCAP_LOG_WARNING, "USB error: %s", hdcap_strerror(r));
                 break;
@@ -330,10 +352,22 @@ hdcap_session *hdcap_session_start(const hdcap_session_config *cfg, const hdcap_
     return s;
 }
 
+static int same_except_picture(const hdcap_session_config *a, const hdcap_session_config *b)
+{
+    return a->input == b->input && a->analog_mode == b->analog_mode && a->h_offset == b->h_offset &&
+           a->v_offset == b->v_offset && a->tv_standard == b->tv_standard;
+}
+
 void hdcap_session_set_config(hdcap_session *s, const hdcap_session_config *cfg)
 {
     pthread_mutex_lock(&s->lock);
+    int picture_only = same_except_picture(&s->cfg, cfg);
     s->cfg = *cfg;
+    if (picture_only) {
+        s->picture_dirty = 1;   /* applied by the worker while streaming, no restart */
+        pthread_mutex_unlock(&s->lock);
+        return;
+    }
     s->restart = 1;
     pthread_cond_broadcast(&s->cond);
     pthread_mutex_unlock(&s->lock);

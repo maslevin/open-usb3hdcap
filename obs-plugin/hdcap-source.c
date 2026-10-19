@@ -24,6 +24,11 @@ OBS_MODULE_USE_DEFAULT_LOCALE("usb3hdcap", "en-US")
 #define S_HOFF          "h_offset"
 #define S_VOFF          "v_offset"
 #define S_TVSTD         "tv_standard"
+#define S_BRIGHT        "sd_brightness"
+#define S_CONTRAST      "sd_contrast"
+#define S_SAT           "sd_saturation"
+#define S_HUE           "sd_hue"
+#define S_SHARP         "sd_sharpness"
 #define AUDIO_CHUNK     1024 /* stereo frames per obs_source_output_audio call */
 
 struct hdcap_source {
@@ -163,6 +168,12 @@ static hdcap_session_config config_from(obs_data_t *settings)
     c.h_offset = (int)obs_data_get_int(settings, S_HOFF);
     c.v_offset = (int)obs_data_get_int(settings, S_VOFF);
     c.tv_standard = (hdcap_std)obs_data_get_int(settings, S_TVSTD);
+    c.picture_set = 1;
+    c.picture.brightness = (int)obs_data_get_int(settings, S_BRIGHT);
+    c.picture.contrast = (int)obs_data_get_int(settings, S_CONTRAST);
+    c.picture.saturation = (int)obs_data_get_int(settings, S_SAT);
+    c.picture.hue = (int)obs_data_get_int(settings, S_HUE);
+    c.picture.sharpness = (int)obs_data_get_int(settings, S_SHARP);
     return c;
 }
 
@@ -203,6 +214,28 @@ static void hdcap_defaults(obs_data_t *settings)
     obs_data_set_default_int(settings, S_HOFF, 0);
     obs_data_set_default_int(settings, S_VOFF, 0);
     obs_data_set_default_int(settings, S_TVSTD, HDCAP_STD_AUTO);
+    const hdcap_picture pd = HDCAP_PICTURE_DEFAULTS;
+    obs_data_set_default_int(settings, S_BRIGHT, pd.brightness);
+    obs_data_set_default_int(settings, S_CONTRAST, pd.contrast);
+    obs_data_set_default_int(settings, S_SAT, pd.saturation);
+    obs_data_set_default_int(settings, S_HUE, pd.hue);
+    obs_data_set_default_int(settings, S_SHARP, pd.sharpness);
+}
+
+/* Show only the settings that apply to the selected input. */
+static bool input_changed(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
+{
+    (void)prop;
+    int in = (int)obs_data_get_int(settings, S_INPUT);
+    bool sd = in == HDCAP_INPUT_COMPOSITE || in == HDCAP_INPUT_SVIDEO;
+    bool analog = in == HDCAP_INPUT_VGA || in == HDCAP_INPUT_COMPONENT;
+    const char *sd_keys[] = { S_TVSTD, S_BRIGHT, S_CONTRAST, S_SAT, S_HUE, S_SHARP };
+    const char *an_keys[] = { S_MODE, S_HOFF, S_VOFF };
+    for (size_t i = 0; i < sizeof sd_keys / sizeof *sd_keys; i++)
+        obs_property_set_visible(obs_properties_get(props, sd_keys[i]), sd);
+    for (size_t i = 0; i < sizeof an_keys / sizeof *an_keys; i++)
+        obs_property_set_visible(obs_properties_get(props, an_keys[i]), analog);
+    return true;
 }
 
 static obs_properties_t *hdcap_properties(void *data)
@@ -228,6 +261,13 @@ static obs_properties_t *hdcap_properties(void *data)
         obs_property_list_add_int(sd, hdcap_std_name((hdcap_std)i), i);
     obs_properties_add_int_slider(p, S_HOFF, obs_module_text("HOffset"), -200, 200, 1);
     obs_properties_add_int_slider(p, S_VOFF, obs_module_text("VOffset"), -60, 60, 1);
+    /* Composite/S-Video picture (TW9900); applied live without restarting capture */
+    obs_properties_add_int_slider(p, S_BRIGHT, obs_module_text("Brightness"), -128, 127, 1);
+    obs_properties_add_int_slider(p, S_CONTRAST, obs_module_text("Contrast"), 0, 255, 1);
+    obs_properties_add_int_slider(p, S_SAT, obs_module_text("Saturation"), 0, 255, 1);
+    obs_properties_add_int_slider(p, S_HUE, obs_module_text("Hue"), -128, 127, 1);
+    obs_properties_add_int_slider(p, S_SHARP, obs_module_text("Sharpness"), 0, 15, 1);
+    obs_property_set_modified_callback(in, input_changed);
     return p;
 }
 

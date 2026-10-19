@@ -49,6 +49,25 @@ int main(void)
                s.locked, s.hfreq_hz / 1000, s.vfreq_hz, s.vtotal, s.interlaced ? " interlaced" : "", m ? m->name : "-");
         fails += !ok;
     }
+    /* ADC front end vs register states the Windows driver left in our captures (c14/c15 component
+     * 480i, c05 VGA ~27 MHz) and the HD anchors */
+    static const struct { const char *what; hdcap_input in; double mhz; hdcap_frontend want; } fe[] = {
+        { "component 480i 13.5 MHz (c14/c15)", HDCAP_INPUT_COMPONENT, 13.5,   { 0x08, 0x08, 0x08, 0x18, 0x98 } },
+        { "component 480p 27 MHz",             HDCAP_INPUT_COMPONENT, 27.0,   { 0x20, 0x08, 0x08, 0x18, 0x98 } },
+        { "component 720p 74.25 MHz",          HDCAP_INPUT_COMPONENT, 74.25,  { 0x58, 0x38, 0x20, 0x30, 0xE0 } },
+        { "component 1080p 148.5 MHz",         HDCAP_INPUT_COMPONENT, 148.5,  { 0xE8, 0x38, 0x30, 0xA0, 0xF0 } },
+        { "VGA 640x480 25.175 MHz (c05)",      HDCAP_INPUT_VGA,       25.175, { 0x20, 0x08, 0x08, 0x00, -1 } },
+        { "VGA 1024x768 65 MHz",               HDCAP_INPUT_VGA,       65.0,   { 0x58, 0x38, 0x20, 0x30, -1 } },
+    };
+    for (size_t i = 0; i < sizeof fe / sizeof fe[0]; i++) {
+        hdcap_frontend f = hdcap_frontend_for(fe[i].in, fe[i].mhz);
+        int ok = f.pll_gain == fe[i].want.pll_gain && f.clamp_delay == fe[i].want.clamp_delay &&
+                 f.clamp_width == fe[i].want.clamp_width && f.hsync_width == fe[i].want.hsync_width &&
+                 f.clamp_level == fe[i].want.clamp_level;
+        printf("%-34s %s  03=%02x 05=%02x 06=%02x 07=%02x 39=%d\n", fe[i].what, ok ? "OK  " : "FAIL", f.pll_gain,
+               f.clamp_delay, f.clamp_width, f.hsync_width, f.clamp_level);
+        fails += !ok;
+    }
     printf("%s\n", fails ? "FAILURES" : "ALL OK");
     return fails != 0;
 }

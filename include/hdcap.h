@@ -130,6 +130,18 @@ const char *hdcap_std_name(hdcap_std std);
  * timeout_ms for it to finish. Returns the standard in use (>= 0) or a negative error. */
 int hdcap_setup_sd(hdcap *dev, hdcap_std std, int timeout_ms);
 
+/* Composite/S-Video picture adjustment (TW9900 0x10-0x15, datasheet units). Defaults are the
+ * Windows driver's values. */
+typedef struct {
+    int brightness;   /* -128..127 (offset) */
+    int contrast;     /* 0..255 percent */
+    int saturation;   /* 0..255, 128 = 100% (U and V gain) */
+    int hue;          /* -128..127, 0.28 degrees per step; NTSC only */
+    int sharpness;    /* 0..15 */
+} hdcap_picture;
+#define HDCAP_PICTURE_DEFAULTS { -9, 121, 128, 0, 2 }
+int hdcap_set_picture(hdcap *dev, const hdcap_picture *p);
+
 /* ---------- Analog timing modes (VGA / Component) ---------- */
 
 typedef struct {
@@ -144,9 +156,20 @@ typedef struct {
 const hdcap_mode *hdcap_modes(size_t *count);
 /* Best standard mode for a locked analog signal, or NULL. */
 const hdcap_mode *hdcap_find_mode(hdcap_input in, const hdcap_signal *s);
-/* Program the MST3367 sampling PLL (h-total) and crop window to the mode's active area,
- * shifted by the given offsets (samples / lines). */
-int hdcap_set_mode(hdcap *dev, const hdcap_mode *m, int hoffset, int voffset);
+/* Program the MST3367 for an analog mode on VGA or Component: the ADC front end for the mode's
+ * pixel clock (PLL gain, clamp timing, sync width), the sampling PLL (h-total), and the crop window
+ * on the active area shifted by the given offsets (samples / lines). */
+int hdcap_set_mode(hdcap *dev, hdcap_input in, const hdcap_mode *m, int hoffset, int voffset);
+
+/* ADC front-end settings the driver uses for a pixel clock (exposed for tests and tools). */
+typedef struct {
+    uint8_t pll_gain;      /* bank 0 0x03 */
+    uint8_t clamp_delay;   /* 0x05 */
+    uint8_t clamp_width;   /* 0x06 */
+    uint8_t hsync_width;   /* 0x07; 0 = leave the input table's value */
+    int     clamp_level;   /* 0x39 for component (clamp_delay + clamp_width - 0x78); -1 = leave */
+} hdcap_frontend;
+hdcap_frontend hdcap_frontend_for(hdcap_input in, double pclk_mhz);
 
 /* ---------- Stream demultiplexing ---------- */
 
@@ -166,6 +189,9 @@ typedef struct hdcap_demux hdcap_demux;
 
 hdcap_demux *hdcap_demux_new(hdcap_frame_cb on_frame, hdcap_audio_cb on_audio, void *user);
 void hdcap_demux_free(hdcap_demux *dx);
+/* Progressive SD sources (240p/288p consoles on Composite/S-Video): emit every field as its own
+ * frame with each line doubled (720x480/576, correct shape), instead of weaving field pairs. */
+void hdcap_demux_set_line_double(hdcap_demux *dx, int on);
 /* Feed raw isochronous payload bytes (any chunking). */
 void hdcap_demux_feed(hdcap_demux *dx, const uint8_t *data, size_t len);
 
@@ -205,6 +231,8 @@ typedef struct {
     int         analog_mode;   /* VGA/Component: -1 = auto, else index into hdcap_modes() */
     int         h_offset, v_offset;
     hdcap_std   tv_standard;   /* Composite/S-Video */
+    int           picture_set; /* 0 = HDCAP_PICTURE_DEFAULTS */
+    hdcap_picture picture;     /* Composite/S-Video; changing only this applies without restarting */
 } hdcap_session_config;
 
 typedef enum {

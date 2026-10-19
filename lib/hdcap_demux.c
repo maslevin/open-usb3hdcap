@@ -39,6 +39,7 @@ struct hdcap_demux {
     uint8_t *field0;
     int      field0_lines, field0_line_bytes, have_field0;
     uint64_t f1_seen_at;            /* frame counter when a field-1 line was last seen */
+    int      line_double;           /* progressive SD (240p/288p): one frame per field, lines doubled */
     uint8_t *frame;
     hdcap_demux_stats stats;
 };
@@ -71,6 +72,12 @@ void hdcap_demux_free(hdcap_demux *dx)
     free(dx);
 }
 
+void hdcap_demux_set_line_double(hdcap_demux *dx, int on)
+{
+    dx->line_double = on;
+    dx->have_field0 = 0;
+}
+
 void hdcap_demux_get_stats(const hdcap_demux *dx, hdcap_demux_stats *st)
 {
     *st = dx->stats;
@@ -93,6 +100,14 @@ static void field_done(hdcap_demux *dx)
         if (dx->seen_blank && lines)
             dx->stats.dropped_frames++;
         dx->field_bad = 0;
+        return;
+    }
+    if (dx->line_double) {
+        for (int i = 0; i < lines; i++) {
+            memcpy(dx->frame + (size_t)(2 * i) * lb, dx->field + (size_t)i * lb, lb);
+            memcpy(dx->frame + (size_t)(2 * i + 1) * lb, dx->field + (size_t)i * lb, lb);
+        }
+        emit(dx, dx->frame, lb / 2, 2 * lines, 0);
         return;
     }
     int interlaced = dx->stats.frames < dx->f1_seen_at + 4 && dx->f1_seen_at != 0;

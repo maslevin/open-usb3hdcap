@@ -182,9 +182,27 @@ progressive (cross-checked against 0x59/0x5A) and from 0x59/0x5A when interlaced
 modes), and htotal x line rate gives the pixel clock (74.25 / 148.47 MHz measured). `tests/mst_decode_test.c`
 replays the captured register values.
 
+Several MST3367/TW9900 details below were cross-checked against **mlaux/usb3hdcap** (Matthew Laux's
+GPL-2.0 Linux driver for this card). Each was verified against our captures or the datasheets as
+noted, and no code was taken (see the project's research notes for the full comparison).
+
 Further hdcapm claims, not yet checked here: bank 0 0x50 = chip revision 1; 0x55 & 0x3C = TMDS signal
 present; 0xB7 bit 1 = hot-plug off; 0xB8 0x10→0x00 HDCP reset; bank 2 0x07 0xF4→0x04 HDMI core reset;
 bank 1 0x01 bit 2 HDMI (vs DVI) and bit 0 HDCP active, bank 1 0x34 bit 7 HDCP.
+
+### MST3367 analog front end by pixel clock (2026-10-19)
+Bank 0: 0x03 PLL gain, 0x05/0x06 clamp delay/width, 0x07 sync output width, 0x39 clamp level
+(component: 0x05 + 0x06 − 0x78). libhdcap chooses them from the mode's pixel clock:
+
+| Pixel clock | 0x03 | 0x05 | 0x06 | 0x07 | Evidence |
+|---|---|---|---|---|---|
+| < 20 MHz (480i/576i) | 08 | 08 | 08 | 18 | equals the Windows state in captures c14/c15; live component 480i |
+| 20–45 MHz (480p, VGA 640x480–800x600) | 20 | 08 | 08 | 18 (VGA: table's 20) | VGA capture c05 (~27 MHz); live component 480p and VGA 640x480 |
+| 45–105 MHz (720p, 1080i, VESA) | 58 | 38 | 20 | 30 | Windows driver's component table, via mlaux/usb3hdcap; not verified here |
+| > 105 MHz (1080p, VESA) | E8 | 38 | 30 | A0 | same; not verified here |
+
+VGA clamps differently from component (0x2C = 0xCC, 0x39 = 0x00 in the VGA table), so 0x39 is
+only written for component. Before this, every mode kept the input table's 480i or 640x480 value.
 
 ### MST3367 analog sampling and crop window (verified live, 2026-10-18)
 Bank 0:
@@ -228,3 +246,22 @@ same line rate and line count as VESA 640×480@60, so it needs a manual choice.
 - Restarting detection after lock (SDTR 0x1D bit 7 ATSTART) and waiting for SDT bit 7 (DETSTUS)
   to clear gives NTSC-M reliably. libhdcap does this by default and offers a manual override
   (the vendor INF also exposes a standard setting, defaulting to NTSC-M).
+- The same initial PAL-60 latch happened with a DVD player on S-Video (2026-10-19); the restart
+  corrected it.
+
+### Composite/S-Video picture window, progressive sources, picture controls (2026-10-19)
+- **Picture window.** The input tables end with the window the Windows driver sets for NTSC: CROP_HI
+  0x07 = 0x02, VDELAY 0x14, VACTIVE 0xF2, HDELAY 0x10, HACTIVE 0x2D0, VVBI 0x55 bit 4 set. For
+  625-line standards (PAL-B/D/G/H/I, SECAM, PAL-N) libhdcap writes VACTIVE_HI = 1 into CROP_HI bits
+  5:4 (VACTIVE 0x120 = 288 lines per field), VDELAY 0x19, HDELAY 0x0A, and clears VVBI bit 4. The
+  values come from mlaux/usb3hdcap, whose NTSC branch matches our captures exactly; the layout
+  follows the datasheet. **Not yet verified with a PAL source.**
+- **Progressive sources.** STATUS2 0x31 bit 3 (NINTL) = non-interlaced (datasheet). For 240p/288p
+  (retro consoles) libhdcap emits each field as a frame with lines doubled (720x480/576), instead of
+  weaving fields from different frames. Verified: a 480i DVD reads 0x31 = 0x90 (interlaced);
+  **not yet verified with a 240p source.**
+- **Picture controls** (datasheet): 0x10 brightness (signed), 0x11 contrast (%, 0x64 = 100%), 0x12
+  bits 3:0 sharpness (upper bits 0x50 kept), 0x13/0x14 U/V gain (0x80 = 100%), 0x15 hue (signed,
+  NTSC only). The Windows defaults, BRIGHT 0xF7, CONTRAST 0x79, SAT 0x80, HUE 0x00, SHARPNESS 0x52, are
+  libhdcap's defaults. Verified live on S-Video: saturation 0 gives grey, and brightness raises
+  the level.

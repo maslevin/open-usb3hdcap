@@ -8,6 +8,7 @@ Status: **working on macOS** (Intel, macOS 15.8, OBS 32.2.2). Verified live:
 - HDMI 1280×720p60 with 48 kHz stereo audio.
 - DVI-D up to **1920×1080p60** (259.8 MB/s): 800×600, 1024×768, 1280×1024, 1440×900, 1080p24/60.
 - VGA 640×480@60.
+- Component 480i and 480p, S-Video NTSC (DVD player), Composite NTSC (Dreamcast).
 
 The colour matrix and audio source are chosen automatically from the HDMI/DVI AVI InfoFrame and the
 receiver's audio status. Requires a USB 3 (SuperSpeed) connection: on USB 2.0 only SD
@@ -15,8 +16,11 @@ composite/S-Video can fit. Input selection (HDMI, VGA, Component,
 Composite, S-Video) and signal detection are implemented. VGA/Component timings are identified
 against a table of VESA/CEA-861 modes (`lib/hdcap_modes.c`); the driver programs the ADC sampling
 PLL and crops to the active picture, with manual mode choice and position offsets. Verified
-live: VGA 640×480@60 (VESA and 27 MHz Dreamcast variant). Higher-resolution analog modes use the
-same programming but their ADC clock-range settings are not yet verified. The demuxer is validated on
+live: VGA 640×480@60 (VESA and 27 MHz Dreamcast variant). The ADC front end (PLL gain, clamp,
+sync width) follows the mode's pixel clock; values above 45 MHz (component HD, high-resolution VGA)
+come from the Windows driver's tables and are not yet verified on hardware. Composite/S-Video has
+picture controls, a 576-line window for PAL/SECAM and line doubling for 240p/288p sources (the
+last two not yet verified with such sources). The demuxer is validated on
 VGA 640×480, HDMI 720p, NTSC composite/S-Video and component 480i/480p captures.
 
 ## Layout

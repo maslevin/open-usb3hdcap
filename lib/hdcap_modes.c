@@ -13,6 +13,12 @@
  *   0x84             window vertical start (lines from sync, per field)
  *   0x85[5]          interlaced (field) mode;  0x85[3:0], 0x86  window height (per field)
  * Changing the width changes the line length in the USB stream; the demuxer follows automatically.
+ *
+ * ADC front end, by pixel clock (bank 0): 0x03 PLL gain, 0x05/0x06 clamp delay/width, 0x07 sync
+ * output width, 0x39 clamp level (component). Anchors: 13.5 and 27 MHz match our Windows captures
+ * (component 480i c14/c15, VGA c05); 74.25 and 148.5 MHz come from the Windows driver's component
+ * table as reported by mlaux/usb3hdcap. VESA clocks between anchors take the nearest band, and HD
+ * clocks on VGA reuse the component values: not yet verified on hardware.
  */
 #include "hdcap.h"
 
@@ -100,10 +106,39 @@ static int mst_write(hdcap *dev, uint8_t reg, uint8_t val)
     return r < 0 ? r : hdcap_i2c_write(dev, HDCAP_I2C_MST3367, reg, val);
 }
 
-int hdcap_set_mode(hdcap *dev, const hdcap_mode *m, int hoffset, int voffset)
+hdcap_frontend hdcap_frontend_for(hdcap_input in, double pclk_mhz)
+{
+    hdcap_frontend f;
+    if (pclk_mhz < 20)          /* 480i/576i, 13.5 MHz */
+        f = (hdcap_frontend){ 0x08, 0x08, 0x08, 0x18, 0 };
+    else if (pclk_mhz < 45)     /* 480p/576p, VGA 640x480..800x600 (25-40 MHz) */
+        f = (hdcap_frontend){ 0x20, 0x08, 0x08, 0x18, 0 };
+    else if (pclk_mhz < 105)    /* 720p, 1080i (74.25 MHz); VESA 50-95 MHz */
+        f = (hdcap_frontend){ 0x58, 0x38, 0x20, 0x30, 0 };
+    else                        /* 1080p (148.5 MHz); VESA 105-162 MHz */
+        f = (hdcap_frontend){ 0xE8, 0x38, 0x30, 0xA0, 0 };
+    if (in == HDCAP_INPUT_COMPONENT) {
+        f.clamp_level = (f.clamp_delay + f.clamp_width - 0x78) & 0xFF;
+    } else {
+        /* VGA (RGB) clamps differently (0x2C/0x39 from the input table); at SD clocks keep the
+         * sync width the VGA table uses (0x20, capture c05) */
+        f.clamp_level = -1;
+        if (pclk_mhz < 45)
+            f.hsync_width = 0;
+    }
+    return f;
+}
+
+int hdcap_set_mode(hdcap *dev, hdcap_input in, const hdcap_mode *m, int hoffset, int voffset)
 {
     uint8_t r02;
     int r;
+    hdcap_frontend fe = hdcap_frontend_for(in, m->pclk_mhz);
+    if ((r = mst_write(dev, 0x03, fe.pll_gain)) < 0 || (r = mst_write(dev, 0x05, fe.clamp_delay)) < 0 ||
+        (r = mst_write(dev, 0x06, fe.clamp_width)) < 0 ||
+        (fe.hsync_width && (r = mst_write(dev, 0x07, fe.hsync_width)) < 0) ||
+        (fe.clamp_level >= 0 && (r = mst_write(dev, 0x39, (uint8_t)fe.clamp_level)) < 0))
+        return r;
     unsigned div = (unsigned)m->htotal - 1;
     int hs = m->hstart - 1 + hoffset, vs = m->vstart + voffset;
     if (hs < 0) hs = 0;

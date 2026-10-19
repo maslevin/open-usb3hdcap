@@ -96,6 +96,7 @@ static void usage(void)
             "  -m NAME   analog mode override (substring of a mode name, e.g. \"27 MHz\", \"800x600@60\")\n"
             "  -H N, -V N  analog window offset in samples / lines\n"
             "  -S STD    TV standard for composite/S-Video: Auto (default), NTSC-M, PAL, SECAM, NTSC-4.43, PAL-M, PAL-CN, PAL-60\n"
+            "  -P B,C,S,H,SH  composite/S-Video picture: brightness, contrast %%, saturation (128 = 100%%), hue, sharpness\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
             "  -t SEC    stream duration (default 5)\n"
             "  -n N      number of frames to save as PPM (default 3)\n"
@@ -111,10 +112,12 @@ int main(int argc, char **argv)
     double rate = 1.0;
     const char *mode_name = NULL;
     int tv_std = HDCAP_STD_AUTO;
+    hdcap_picture pic = HDCAP_PICTURE_DEFAULTS;
+    int pic_set = 0;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:i:m:H:V:S:t:n:o:D:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:i:m:H:V:S:P:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
@@ -123,6 +126,11 @@ int main(int argc, char **argv)
         case 'v': verbose++; break;
         case 'D': max_delay = atoi(optarg); break;
         case 'm': mode_name = optarg; break;
+        case 'P':
+            if (sscanf(optarg, "%d,%d,%d,%d,%d", &pic.brightness, &pic.contrast, &pic.saturation, &pic.hue,
+                       &pic.sharpness) != 5) { usage(); return 2; }
+            pic_set = 1;
+            break;
         case 'S':
             for (int k = 0; k <= HDCAP_STD_AUTO; k++)
                 if (!strcasecmp(optarg, hdcap_std_name(k)))
@@ -153,8 +161,9 @@ int main(int argc, char **argv)
     int mbps = hdcap_link_speed_mbps(dev);
     fprintf(stderr, "USB link: %d Mbit/s%s\n", mbps,
             mbps < 5000 ? "  (WARNING: not SuperSpeed; only SD composite/S-Video can fit through USB 2.0)" : "");
+    hdcap_signal sig = {0};
+    int have_sig = 0;
     if (input >= 0) {
-        hdcap_signal sig;
         double t0 = now();
         if ((r = hdcap_init(dev)) < 0 || (r = hdcap_select_input(dev, input)) < 0) {
             fprintf(stderr, "init/select %s: %s\n", hdcap_input_name(input), hdcap_strerror(r));
@@ -163,6 +172,7 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "selected %s in %.2f s; waiting for signal\n", hdcap_input_name(input), now() - t0);
         r = hdcap_wait_signal(dev, input, 5000, &sig);
+        have_sig = r == 1;
         if (r < 0) {
             fprintf(stderr, "signal: %s\n", hdcap_strerror(r));
             hdcap_close(dev);
@@ -182,6 +192,11 @@ int main(int argc, char **argv)
                 fprintf(stderr, "TV standard: %s\n", hdcap_strerror(st));
             else
                 fprintf(stderr, "TV standard: %s%s\n", hdcap_std_name(st), tv_std == HDCAP_STD_AUTO ? " (detected)" : " (forced)");
+            if (pic_set && (r = hdcap_set_picture(dev, &pic)) < 0)
+                fprintf(stderr, "picture: %s\n", hdcap_strerror(r));
+            else if (pic_set)
+                fprintf(stderr, "picture: brightness %d, contrast %d%%, saturation %d, hue %d, sharpness %d\n", pic.brightness,
+                        pic.contrast, pic.saturation, pic.hue, pic.sharpness);
         }
         rate = hdcap_estimate_rate(input, &sig, NULL);
         if (r == 1 && (input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI)) {
@@ -213,7 +228,7 @@ int main(int argc, char **argv)
             if (m) {
                 fprintf(stderr, "mode: %s (h-total %d, active %dx%d%s, window start %d/%d, offset %+d/%+d)\n", m->name,
                         m->htotal, m->hactive, m->vactive, m->interlaced ? " per field" : "", m->hstart, m->vstart, hoff, voff);
-                if ((r = hdcap_set_mode(dev, m, hoff, voff)) < 0)
+                if ((r = hdcap_set_mode(dev, input, m, hoff, voff)) < 0)
                     fprintf(stderr, "set mode: %s\n", hdcap_strerror(r));
             } else {
                 fprintf(stderr, "mode: none matched; keeping the input table's default sampling\n");
@@ -237,6 +252,10 @@ int main(int argc, char **argv)
         wav_header(c.wav, 0);
 
     hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, &c);
+    if (dx && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) && have_sig && !sig.interlaced) {
+        hdcap_demux_set_line_double(dx, 1);
+        fprintf(stderr, "progressive SD source: line doubling\n");
+    }
     fprintf(stderr, "expected stream rate: %.1f MB/s\n", rate / 1e6);
     if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
         fprintf(stderr, "stream start: %s\n", hdcap_strerror(dx ? r : HDCAP_ERR_NOMEM));

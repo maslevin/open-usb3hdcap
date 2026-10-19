@@ -44,7 +44,7 @@ static char g_config_path[1024];
 static dispatch_queue_t g_q;              /* serialises client list, session lifetime, config */
 static client *g_clients;
 static hdcap_session *g_session;
-static hdcap_session_config g_cfg = { HDCAP_INPUT_HDMI, -1, 0, 0, HDCAP_STD_AUTO };
+static hdcap_session_config g_cfg = { HDCAP_INPUT_HDMI, -1, 0, 0, HDCAP_STD_AUTO, 0, { 0, 0, 0, 0, 0 } };
 static uint64_t g_idle_token;             /* cancels pending idle releases */
 
 /* Audio ring (shared memory) */

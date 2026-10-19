@@ -13,3 +13,4 @@ dist/
 macos/build/
 tests/resample_sim
 tests/mst_decode_test
+tests/demux_linedouble_test

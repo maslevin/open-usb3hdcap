@@ -162,18 +162,21 @@ int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s)
     if (in == HDCAP_INPUT_COMPOSITE || in == HDCAP_INPUT_SVIDEO) {
         /* TW9900 STATUS1 (0x01): bit7 VDLOSS, bit6 HLOCK, bit3 VLOCK, bit0 DET50. SDT (0x1C) bits 6-4: standard. */
         static const char *const std[] = { "NTSC-M", "PAL-BDGHI", "SECAM", "NTSC-4.43", "PAL-M", "PAL-CN", "PAL-60", "?" };
-        uint8_t st, sdt;
-        if ((r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x01, &st)) < 0)
-            return r;
-        if ((r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x1C, &sdt)) < 0)
+        /* STATUS2 (0x31) bit 3 NINTL: non-interlaced source (240p/288p consoles) */
+        uint8_t st, sdt, st2;
+        if ((r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x01, &st)) < 0 ||
+            (r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x1C, &sdt)) < 0 ||
+            (r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x31, &st2)) < 0)
             return r;
         s->raw[0] = st;
         s->raw[1] = sdt;
+        s->raw[2] = st2;
         s->locked = !(st & 0x80) && (st & 0x40) && (st & 0x08);
-        s->interlaced = 1;
+        s->interlaced = !(st2 & 0x08);
         s->vfreq_hz = (st & 0x01) ? 50.0 : 59.94;
-        s->vtotal = (st & 0x01) ? 625 : 525;
-        s->hfreq_hz = s->vtotal * s->vfreq_hz / 2;
+        /* lines per frame, as for MST3367 sources: per field (262/312) when progressive */
+        s->vtotal = (st & 0x01) ? (s->interlaced ? 625 : 312) : (s->interlaced ? 525 : 262);
+        s->hfreq_hz = (s->interlaced ? s->vtotal / 2.0 : s->vtotal) * s->vfreq_hz;
         s->standard = s->locked ? std[(sdt >> 4) & 7] : NULL;
         return 0;
     }
@@ -332,12 +335,54 @@ const char *hdcap_std_name(hdcap_std std)
     return (unsigned)std < 8 ? n[std] : "?";
 }
 
+/* Picture window for 625-line standards. The input tables end with the window the Windows driver
+ * sets after detecting NTSC (CROP_HI 0x02, HDELAY 0x10, HACTIVE 0x2D0, VACTIVE 0xF2 = 242 lines per
+ * field, VVBI bit 4); for 50 Hz it uses VDELAY 0x19, VACTIVE 0x120 = 288 lines (CROP_HI bits 5:4),
+ * HDELAY 0x0A and VVBI bit 4 clear (values from mlaux/usb3hdcap; layout per the TW9900 datasheet,
+ * registers 0x07-0x0B and 0x55). Without this a 576i picture is cut to 484 lines. */
+static int sd_window_625(hdcap *dev)
+{
+    uint8_t crop, vvbi;
+    int r;
+    if ((r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x07, &crop)) < 0 ||
+        (r = hdcap_i2c_read(dev, HDCAP_I2C_TW9900, 0x55, &vvbi)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x07, (uint8_t)((crop & 0x0F) | 0x10))) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x08, 0x19)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x09, 0x20)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x0A, 0x0A)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x0B, 0xD0)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x55, (uint8_t)(vvbi & ~0x10))) < 0)
+        return r;
+    return 0;
+}
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+int hdcap_set_picture(hdcap *dev, const hdcap_picture *p)
+{
+    int r;
+    uint8_t sat = (uint8_t)clampi(p->saturation, 0, 255);
+    if ((r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x10, (uint8_t)(int8_t)clampi(p->brightness, -128, 127))) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x11, (uint8_t)clampi(p->contrast, 0, 255))) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x13, sat)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x14, sat)) < 0 ||
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x15, (uint8_t)(int8_t)clampi(p->hue, -128, 127))) < 0 ||
+        /* 0x12: keep the Windows upper bits (0x50: VSF, CTI level 1), sharpness in bits 3:0 */
+        (r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x12, (uint8_t)(0x50 | clampi(p->sharpness, 0, 15)))) < 0)
+        return r;
+    return 0;
+}
+
+static int std_is_625(int std) { return std == HDCAP_STD_PAL || std == HDCAP_STD_SECAM || std == HDCAP_STD_PAL_CN; }
+
 int hdcap_setup_sd(hdcap *dev, hdcap_std std, int timeout_ms)
 {
     int r;
     uint8_t sdt;
     if (std != HDCAP_STD_AUTO) {
         if ((r = hdcap_i2c_write(dev, HDCAP_I2C_TW9900, 0x1C, (uint8_t)std)) < 0)
+            return r;
+        if (std_is_625(std) && (r = sd_window_625(dev)) < 0)
             return r;
         return std;
     }
@@ -357,5 +402,8 @@ int hdcap_setup_sd(hdcap *dev, hdcap_std std, int timeout_ms)
         if (waited >= timeout_ms)
             break;
     }
-    return (sdt >> 4) & 7;
+    int detected = (sdt >> 4) & 7;
+    if (std_is_625(detected) && (r = sd_window_625(dev)) < 0)
+        return r;
+    return detected;
 }
