@@ -57,6 +57,7 @@ $(HAL): hal/hdcap_hal.c hal/Info.plist common/hdcapd_protocol.h
 	$(SUBST) hal/Info.plist > $@/Contents/Info.plist
 	$(CC) -O2 -g -Wall -Wextra -std=gnu11 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -bundle \
 		-o $@/Contents/MacOS/USB3HDCAP hal/hdcap_hal.c -framework CoreFoundation -framework CoreAudio
+	rm -rf $@/Contents/MacOS/*.dSYM   # one-step -g builds leave debug symbols next to the binary
 	$(CODESIGN) $@
 
 $(OUT)/hal-harness: hal/hal-harness.c
@@ -83,6 +84,7 @@ $(APP): app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) $(wildcard 
 	$(SUBST) app/app.entitlements > $(OUT)/app.entitlements
 	$(if $(PROFILE_EXT),cp "$(PROFILE_EXT)" $(EXT)/Contents/embedded.provisionprofile)
 	$(if $(PROFILE_APP),cp "$(PROFILE_APP)" $@/Contents/embedded.provisionprofile)
+	rm -rf $@/Contents/MacOS/*.dSYM $(EXT)/Contents/MacOS/*.dSYM
 	$(CODESIGN) --entitlements $(OUT)/camera.entitlements $(EXT)
 ifeq ($(SIGN_IDENTITY),-)
 	@# ad-hoc: restricted entitlements (system-extension.install) would make AMFI refuse to launch the app
@@ -105,8 +107,14 @@ notarize-app: $(APP)
 	xcrun stapler staple $(APP)
 	spctl -a -vv -t exec $(APP)
 
+# Signed (and, with NOTARY_PROFILE, notarized) installer: app + hdcapd LaunchDaemon + HAL plug-in.
+VERSION ?= $(shell /usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' app/Info.plist)
+pkg: notarize-app $(OUT)/hdcapd $(HAL)
+	OUT=$(OUT) BUNDLE_ID=$(BUNDLE_ID) VERSION=$(VERSION) INSTALLER_IDENTITY="$(INSTALLER_IDENTITY)" \
+		NOTARY_PROFILE="$(NOTARY_PROFILE)" scripts/build-pkg.sh
+
 clean:
 	rm -rf $(OUT)
 
 FORCE:
-.PHONY: all clean FORCE notarize-app
+.PHONY: all clean FORCE notarize-app pkg

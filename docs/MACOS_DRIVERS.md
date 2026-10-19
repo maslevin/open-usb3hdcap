@@ -100,8 +100,12 @@ Working since 2026-10-19 with the Islandia Logic Ltd. team.
 3. `make -C macos` signs everything with hardened runtime and secure timestamps. hdcapd is universal
    and links libusb statically (`packaging/build-libusb-universal.sh`).
    `make -C macos notarize-app` notarizes and staples the host app.
-4. `sudo macos/scripts/install-system.sh install`, copy `USB3HDCAP.app` to `/Applications`, run it,
-   click **Install Camera** and approve it in System Settings → General → Login Items & Extensions.
+4. `make -C macos pkg` builds `build/USB3HDCAP-<version>.pkg`: the app in /Applications, hdcapd as
+   a LaunchDaemon (`/Library/Application Support/open-usb3hdcap`, with `uninstall.sh`) and the HAL
+   plug-in. It is signed with the Installer identity, notarized and stapled, and the postinstall
+   script starts hdcapd and restarts coreaudiod. Then run USB3HDCAP.app, click **Install Camera**
+   and approve it in System Settings → General → Login Items & Extensions.
+   (Development alternative: `sudo macos/scripts/install-system.sh install` and copy the app by hand.)
 
 Verified: Gatekeeper reports "Notarized Developer ID"; `systemextensionsctl` lists
 `com.islandialogic.usb3hdcap.camera` as activated and enabled; QuickTime records from the
