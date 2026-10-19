@@ -84,18 +84,28 @@ Build everything with `make -C macos` (needs `make` at the top level for `libhdc
 |---|---|
 | hdcapd | **verified**: 1280×720 @ 60 fps, 48 kHz audio ring, no gaps, input switching, idle release |
 | Camera pipeline (`HDCapFrameSource`) | **verified** via `frame-source-test`: 60 fps, ~1 ms capture→output, correct colour |
-| HAL plug-in | **verified in-process** via `hal-harness` (objects, properties, format, IO reads the ring). Not yet installed into coreaudiod (needs `install-system.sh`, i.e. sudo) |
-| Camera extension + host app | extension classes **verified in-process** via `camera-harness` (all formats, 30/60 fps decimation, timestamps within a few ms of capture, stop/restart). Activation blocked on the developer account (see below) |
+| HAL plug-in | **working**: installed system-wide, recorded in QuickTime; card-rate clock tracking verified over 20 minutes |
+| Camera extension + host app | **working**: Developer ID signed, notarized, activated; QuickTime records from it (2026-10-19). Also verified in-process via `camera-harness` |
 
-### When the Developer Program membership is active
-1. In the developer portal: App IDs `org.open-usb3hdcap.app` (System Extension capability, App
-   Group `<TEAM>.org.open-usb3hdcap.app`) and `org.open-usb3hdcap.app.camera` (same App Group);
-   a Developer ID provisioning profile for each.
-2. `make -C macos SIGN_IDENTITY="Developer ID Application: …" TEAM_ID=<TEAM> PROFILE_APP=… PROFILE_EXT=…`
-3. Copy `USB3HDCAP.app` to `/Applications` (system extensions only activate from there), run it,
-   click **Install Camera**, approve in System Settings.
-4. Sign hdcapd and the HAL plug-in with the same identity; notarize all of it (a .pkg that installs
-   the app, the LaunchDaemon and the HAL plug-in is the natural distribution unit).
+### Signed builds (Developer ID)
+Working since 2026-10-19 with the Islandia Logic Ltd. team.
+1. In the developer portal, register two App IDs: `<BUNDLE_ID>` with the **System Extension**
+   capability, and `<BUNDLE_ID>.camera`. Create a **Developer ID** provisioning profile for each.
+   Create **Developer ID Application** and **Developer ID Installer** certificates, and store notary
+   credentials with `xcrun notarytool store-credentials <profile> --apple-id … --team-id …`.
+2. Copy `macos/signing.mk.example` to `macos/signing.mk` (git-ignored) and fill it in. The camera
+   extension is `<BUNDLE_ID>.camera`, the HAL plug-in `<BUNDLE_ID>.hal` and the daemon
+   `<BUNDLE_ID>.hdcapd`; the app group and the CMIO Mach service carry the team prefix. The XPC
+   service name `org.open-usb3hdcap.hdcapd` stays the same in every build.
+3. `make -C macos` signs everything with hardened runtime and secure timestamps. hdcapd is universal
+   and links libusb statically (`packaging/build-libusb-universal.sh`).
+   `make -C macos notarize-app` notarizes and staples the host app.
+4. `sudo macos/scripts/install-system.sh install`, copy `USB3HDCAP.app` to `/Applications`, run it,
+   click **Install Camera** and approve it in System Settings → General → Login Items & Extensions.
 
-Without the account, the extension can still be tried on a test Mac with SIP disabled and
+Verified: Gatekeeper reports "Notarized Developer ID"; `systemextensionsctl` lists
+`com.islandialogic.usb3hdcap.camera` as activated and enabled; QuickTime records from the
+"USB3HDCAP" camera (a VHS deck on Composite).
+
+Without an account, the extension can still be tried on a test Mac with SIP disabled and
 `systemextensionsctl developer on`.

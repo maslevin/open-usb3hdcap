@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>USB3HDCAP</string>
 	<key>CFBundleIdentifier</key>
-	<string>org.open-usb3hdcap.hal</string>
+	<string>@BUNDLE_ID@.hal</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

@@ -9,7 +9,8 @@
 #include "../common/hdcapd_protocol.h"
 #include <xpc/xpc.h>
 
-#define EXT_ID @"org.open-usb3hdcap.app.camera"
+/* The extension's bundle identifier is the app's plus ".camera" (set at build time). */
+#define EXT_ID [NSBundle.mainBundle.bundleIdentifier stringByAppendingString:@".camera"]
 
 static NSString *const kInputNames[] = { @"HDMI", @"VGA", @"Component", @"Composite", @"S-Video", @"DVI" };
 

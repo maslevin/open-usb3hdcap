@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>en</string>
-	<key>CFBundleExecutable</key><string>org.open-usb3hdcap.app.camera</string>
-	<key>CFBundleIdentifier</key><string>org.open-usb3hdcap.app.camera</string>
+	<key>CFBundleExecutable</key><string>@BUNDLE_ID@.camera</string>
+	<key>CFBundleIdentifier</key><string>@BUNDLE_ID@.camera</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>USB3HDCAP Camera</string>
 	<key>CFBundlePackageType</key><string>SYSX</string>
@@ -13,7 +13,7 @@
 	<key>LSMinimumSystemVersion</key><string>13.0</string>
 	<key>CMIOExtension</key>
 	<dict>
-		<key>CMIOExtensionMachServiceName</key><string>@TEAM_ID@.org.open-usb3hdcap.app.camera</string>
+		<key>CMIOExtensionMachServiceName</key><string>@TEAM_ID@.@BUNDLE_ID@.camera</string>
 	</dict>
 	<key>NSSystemExtensionUsageDescription</key><string>Makes the USB3HDCAP capture card available as a camera in any app.</string>
 	<key>NSHumanReadableCopyright</key><string>Copyright (C) 2026 Matt Slevinsky. GPL-2.0-or-later.</string>

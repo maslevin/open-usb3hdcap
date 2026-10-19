@@ -4,7 +4,7 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>en</string>
 	<key>CFBundleExecutable</key><string>USB3HDCAP</string>
-	<key>CFBundleIdentifier</key><string>org.open-usb3hdcap.app</string>
+	<key>CFBundleIdentifier</key><string>@BUNDLE_ID@</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>USB3HDCAP</string>
 	<key>CFBundlePackageType</key><string>APPL</string>

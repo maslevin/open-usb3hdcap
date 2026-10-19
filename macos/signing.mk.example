@@ -1,0 +1,15 @@
+# Copy to signing.mk (git-ignored) and fill in to build signed, distributable binaries.
+# Without signing.mk everything is ad-hoc signed with the org.open-usb3hdcap identifiers.
+
+# Bundle identifier of the host app; the camera extension is $(BUNDLE_ID).camera, the HAL plug-in
+# $(BUNDLE_ID).hal, the daemon $(BUNDLE_ID).hdcapd. The app and camera IDs must be registered App
+# IDs on your team (the app with the System Extension capability).
+BUNDLE_ID      = com.example.usb3hdcap
+TEAM_ID        = XXXXXXXXXX
+SIGN_IDENTITY  = Developer ID Application: Your Name (XXXXXXXXXX)
+INSTALLER_IDENTITY = Developer ID Installer: Your Name (XXXXXXXXXX)
+# Developer ID provisioning profiles for the two App IDs
+PROFILE_APP    = $(HOME)/Downloads/USB3HDCAP_App.provisionprofile
+PROFILE_EXT    = $(HOME)/Downloads/USB3HDCAP_Camera.provisionprofile
+# keychain profile created with: xcrun notarytool store-credentials NAME --apple-id ... --team-id ...
+NOTARY_PROFILE = usb3hdcap-notary
