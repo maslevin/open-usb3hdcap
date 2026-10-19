@@ -82,6 +82,18 @@ static uint8_t dvi_patch(const hdcap_reg_write *w)
     return w->val;
 }
 
+/* HDCP policy: the MST3367's HDCP receiver stays disabled. The captured Windows tables enable it
+ * (bank 1 0x24 = 0x40); 0x41 disables it (per stoth68000/hdcapm). A capture device is an
+ * unprotected output, so it must never decrypt HDCP content: with the receiver off, sources that
+ * require HDCP withhold protected video (and usually show their own HDCP error) instead of
+ * sending it. The session's notice guard (hdcap_hdcp.c) remains as a second layer. */
+static uint8_t hdcp_policy(const hdcap_reg_write *w, uint8_t val)
+{
+    if (w->addr == HDCAP_I2C_MST3367 && w->bank == 0x01 && w->reg == 0x24 && val == 0x40)
+        return 0x41;
+    return val;
+}
+
 static int apply_table(hdcap *dev, const hdcap_reg_write *t, size_t n, int dvi)
 {
     int bank = -1;
@@ -94,7 +106,7 @@ static int apply_table(hdcap *dev, const hdcap_reg_write *t, size_t n, int dvi)
                 return r;
             bank = t[i].bank;
         }
-        if ((r = hdcap_i2c_write(dev, t[i].addr, t[i].reg, dvi ? dvi_patch(&t[i]) : t[i].val)) < 0)
+        if ((r = hdcap_i2c_write(dev, t[i].addr, t[i].reg, hdcp_policy(&t[i], dvi ? dvi_patch(&t[i]) : t[i].val))) < 0)
             return r;
     }
     return 0;

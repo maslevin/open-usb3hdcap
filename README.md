@@ -59,7 +59,11 @@ open an issue with the **Test report** template. Working results are as valuable
 ### Known limitations
 - 1600×900@60 and 1280×960@60 have identical analog timings. Auto picks 1600×900; choose 1280×960
   manually (OBS: Analog timing).
-- HDCP-protected HDMI sources are not expected to work.
+- **HDCP:** the driver does not accept HDCP-protected content. The capture chip's HDCP receiver is
+  switched off, so sources withhold protected video (they typically show their own HDCP error
+  instead); if HDCP is nonetheless reported active, the capture shows an "HDCP-protected source /
+  capture blocked" notice and audio is muted. Unprotected content from the same device (for example
+  a streaming box's menus) captures normally.
 - Composite/S-Video NTSC frames are 720×478, two lines fewer than the Windows driver delivers.
 
 ## Build from source

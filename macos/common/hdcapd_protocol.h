@@ -20,7 +20,7 @@
  *
  * Status fields: "state" (int64, hdcap_session_state), "state_name", "input", "width", "height",
  *   "interlaced", "fps" (double), "link_mbps", "detail" (string), "vtotal", "hfreq_hz", "vfreq_hz",
- *   "deinterlace".
+ *   "deinterlace", "hdcp_blocked" (bool: HDCP-protected source, frames are a notice, audio silent).
  *
  * Frames: IOSurfaces from a round-robin pool owned by the daemon, pixel format 'yuvs'
  * (kCVPixelFormatType_422YpCbCr8_yuvs: Y0 Cb Y1 Cr). A client must finish with (or copy) a

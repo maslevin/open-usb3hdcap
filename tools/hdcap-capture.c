@@ -25,6 +25,9 @@ typedef struct {
     FILE    *wav;
     uint64_t wav_frames;
     int last_w, last_h, last_i;
+    int hdcp_blocked;   /* HDCP-protected source: frames are saved as the notice, audio as silence */
+    uint8_t *notice;
+    int notice_w, notice_h;
 } ctx_t;
 
 static volatile sig_atomic_t stop;
@@ -53,7 +56,20 @@ static void on_frame(const hdcap_frame *f, void *user)
         if (!c->rgb)
             return;
     }
-    hdcap_yuyv_to_rgb24(f->yuyv, c->rgb, f->width, f->height);
+    const uint8_t *src = f->yuyv;
+    if (c->hdcp_blocked) {
+        if (!c->notice || c->notice_w != f->width || c->notice_h != f->height) {
+            free(c->notice);
+            c->notice = malloc((size_t)f->width * f->height * 2);
+            if (!c->notice)
+                return;
+            c->notice_w = f->width;
+            c->notice_h = f->height;
+            hdcap_render_hdcp_notice(c->notice, f->width, f->height);
+        }
+        src = c->notice;
+    }
+    hdcap_yuyv_to_rgb24(src, c->rgb, f->width, f->height);
     char path[1024];
     snprintf(path, sizeof path, "%s/frame_%03d.ppm", c->outdir, c->saved);
     FILE *o = fopen(path, "wb");
@@ -71,7 +87,12 @@ static void on_frame(const hdcap_frame *f, void *user)
 static void on_audio(const int16_t *s, size_t n, void *user)
 {
     ctx_t *c = user;
-    if (c->wav) {
+    if (c->wav && c->hdcp_blocked) {
+        static const int16_t zeros[512 * 2];
+        for (size_t k = 0; k < n; k += 512)
+            fwrite(zeros, 4, n - k > 512 ? 512 : n - k, c->wav);
+        c->wav_frames += n;
+    } else if (c->wav) {
         fwrite(s, 4, n, c->wav);
         c->wav_frames += n;
     }
@@ -251,6 +272,13 @@ int main(int argc, char **argv)
     if (c.wav)
         wav_header(c.wav, 0);
 
+    /* HDCP compliance: checked before the first frame and every 250 ms while streaming */
+    int digital = input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI;
+    uint8_t hraw[2];
+    if (digital && hdcap_hdcp_status(dev, hraw) == 1) {
+        c.hdcp_blocked = 1;
+        fprintf(stderr, "HDCP-protected source (receiver status %02x/%02x): capture blocked\n", hraw[0], hraw[1]);
+    }
     hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, &c);
     if (dx && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) && have_sig && !sig.interlaced) {
         hdcap_demux_set_line_double(dx, 1);
@@ -264,10 +292,19 @@ int main(int argc, char **argv)
         return 1;
     }
     signal(SIGINT, on_sigint);
-    double t0 = now(), next = t0 + 1;
+    double t0 = now(), next = t0 + 1, next_hdcp = t0 + 0.25;
     uint64_t last_frames = 0, last_bytes = 0;
     while (!stop && now() - t0 < seconds) {
         hdcap_stream_poll(dev, 100);
+        if (digital && now() >= next_hdcp) {
+            next_hdcp = now() + 0.25;
+            int h = hdcap_hdcp_status(dev, hraw);
+            if (h >= 0 && h != c.hdcp_blocked) {
+                c.hdcp_blocked = h;
+                fprintf(stderr, "%s (receiver status %02x/%02x)\n", h ? "HDCP-protected source: capture blocked"
+                                                                       : "HDCP no longer active: capture resumed", hraw[0], hraw[1]);
+            }
+        }
         if (now() >= next) {
             hdcap_demux_stats ds;
             hdcap_stream_stats ss;
@@ -292,5 +329,6 @@ int main(int argc, char **argv)
     hdcap_demux_free(dx);
     hdcap_close(dev);
     free(c.rgb);
+    free(c.notice);
     return 0;
 }

@@ -248,6 +248,7 @@ typedef struct {
     double       fps;                        /* measured over the last second */
     int          link_mbps;
     char         detail[160];                /* human-readable: mode / standard / error */
+    int          hdcp_blocked;               /* HDCP-protected source: notice shown, audio muted */
 } hdcap_session_status;
 
 enum { HDCAP_LOG_DEBUG, HDCAP_LOG_INFO, HDCAP_LOG_WARNING, HDCAP_LOG_ERROR };
@@ -292,6 +293,16 @@ void hdcap_resampler_reset(hdcap_resampler *r);
 size_t hdcap_resampler_process(hdcap_resampler *r, const int16_t *in, size_t frames, uint64_t now_ns,
                                int16_t *out, size_t out_cap, uint64_t *out_ts_ns);
 void hdcap_resampler_get_stats(const hdcap_resampler *r, hdcap_resampler_stats *st);
+
+/* ---------- HDCP compliance ---------- */
+
+/* A capture device is an unprotected output: while an HDMI/DVI source has HDCP active, its picture
+ * and sound must not be delivered. hdcap_hdcp_status() returns 1 if the receiver reports HDCP
+ * active, 0 if not, < 0 on error; raw (optional) gets bank 1 registers 0x01 and 0x34.
+ * hdcap_render_hdcp_notice() fills a YUYV frame with the "HDCP-protected source / capture blocked"
+ * notice. hdcap_session applies both automatically. */
+int  hdcap_hdcp_status(hdcap *dev, uint8_t raw[2]);
+void hdcap_render_hdcp_notice(uint8_t *yuyv, int width, int height);
 
 /* ---------- Deinterlacing ---------- */
 

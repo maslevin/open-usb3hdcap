@@ -122,6 +122,7 @@ static void put_status(xpc_object_t d, const hdcap_session_status *st)
     xpc_dictionary_set_double(d, "hfreq_hz", st->signal.hfreq_hz);
     xpc_dictionary_set_double(d, "vfreq_hz", st->signal.vfreq_hz);
     xpc_dictionary_set_int64(d, "deinterlace", g_deint);
+    xpc_dictionary_set_bool(d, "hdcp_blocked", st->hdcp_blocked);
 }
 
 static void current_status(hdcap_session_status *st)
@@ -259,11 +260,22 @@ static void ensure_session(void)
     logmsg("session started (%s)", hdcap_input_name(g_cfg.input));
 }
 
+/* Only clients that asked for video or audio keep the device claimed. Status-only clients (the
+ * USB3HDCAP app's control panel, hdcapd-client status) must not, or the card stays busy and other
+ * programs (OBS, hdcap-capture) can't open it while the app is open. */
+static int streaming_clients(void)
+{
+    for (client *c = g_clients; c; c = c->next)
+        if (c->video || c->audio)
+            return 1;
+    return 0;
+}
+
 static void schedule_idle_release(void)
 {
     uint64_t token = ++g_idle_token;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, IDLE_RELEASE_SEC * NSEC_PER_SEC), g_q, ^{
-        if (token != g_idle_token || g_clients || !g_session)
+        if (token != g_idle_token || streaming_clients() || !g_session)
             return;
         hdcap_session *s = g_session;
         g_session = NULL;
@@ -339,7 +351,7 @@ static void remove_client(client *c)
     logmsg("client '%s' disconnected", c->name);
     xpc_release(c->conn);
     free(c);
-    if (!g_clients)
+    if (!streaming_clients())
         schedule_idle_release();
 }
 

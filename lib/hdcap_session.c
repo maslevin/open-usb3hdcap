@@ -23,6 +23,7 @@
 
 #define SIGNAL_CHECK_NS     1000000000ULL
 #define NO_FRAME_TIMEOUT_NS 3000000000ULL
+#define HDCP_CHECK_NS       250000000ULL
 
 struct hdcap_session {
     hdcap_session_callbacks cb;
@@ -37,6 +38,11 @@ struct hdcap_session {
     hdcap_session_status status;       /* guarded by lock */
     /* worker-only */
     uint64_t last_frame_ns, fps_window_ns, fps_frames;
+    /* HDCP compliance (worker only): while the source encrypts, frames become a notice and audio
+     * silence; checked before streaming starts and every HDCP_CHECK_NS while streaming */
+    int      hdcp_blocked;
+    uint8_t *notice;
+    int      notice_w, notice_h;
 };
 
 uint64_t hdcap_now_ns(void)
@@ -77,6 +83,10 @@ static void set_status(hdcap_session *s, hdcap_session_state st, const hdcap_sig
     }
     if (detail)
         snprintf(s->status.detail, sizeof s->status.detail, "%s", detail);
+    if (st != HDCAP_SESSION_STREAMING)
+        s->status.hdcp_blocked = 0;
+    else if (s->status.hdcp_blocked)
+        snprintf(s->status.detail, sizeof s->status.detail, "HDCP-protected source: capture blocked");
     hdcap_session_status copy = s->status;
     pthread_mutex_unlock(&s->lock);
     if (s->cb.on_status)
@@ -128,6 +138,21 @@ static void on_frame(const hdcap_frame *f, void *user)
         s->fps_frames = 0;
         s->fps_window_ns = now;
     }
+    if (s->hdcp_blocked) {
+        if (!s->notice || s->notice_w != f->width || s->notice_h != f->height) {
+            free(s->notice);
+            s->notice = malloc((size_t)f->width * f->height * 2);
+            if (!s->notice)
+                return;
+            s->notice_w = f->width;
+            s->notice_h = f->height;
+            hdcap_render_hdcp_notice(s->notice, f->width, f->height);
+        }
+        hdcap_frame nf = { f->width, f->height, 0, f->index, s->notice };
+        if (s->cb.on_frame)
+            s->cb.on_frame(&nf, now, s->cb.user);
+        return;
+    }
     if (s->cb.on_frame)
         s->cb.on_frame(f, now, s->cb.user);
 }
@@ -135,8 +160,19 @@ static void on_frame(const hdcap_frame *f, void *user)
 static void on_audio(const int16_t *samples, size_t count, void *user)
 {
     hdcap_session *s = user;
-    if (s->cb.on_audio)
-        s->cb.on_audio(samples, count, hdcap_now_ns(), s->cb.user);
+    if (!s->cb.on_audio)
+        return;
+    if (s->hdcp_blocked) {   /* keep the audio timeline, deliver silence */
+        static const int16_t zeros[512 * 2];
+        uint64_t now = hdcap_now_ns();
+        while (count) {
+            size_t n = count > 512 ? 512 : count;
+            s->cb.on_audio(zeros, n, now, s->cb.user);
+            count -= n;
+        }
+        return;
+    }
+    s->cb.on_audio(samples, count, hdcap_now_ns(), s->cb.user);
 }
 
 /* Composite/S-Video picture settings from the current configuration. */
@@ -150,6 +186,29 @@ static void apply_picture(hdcap_session *s, hdcap *dev)
     int r = hdcap_set_picture(dev, &p);
     if (r < 0)
         logf_(s, HDCAP_LOG_WARNING, "picture settings: %s", hdcap_strerror(r));
+}
+
+/* Re-read the receiver's HDCP status and switch blocking on or off, logging transitions. */
+static void hdcp_check(hdcap_session *s, hdcap *dev)
+{
+    uint8_t raw[2];
+    int r = hdcap_hdcp_status(dev, raw);
+    if (r < 0 || r == s->hdcp_blocked)
+        return;
+    s->hdcp_blocked = r;
+    if (r)
+        logf_(s, HDCAP_LOG_WARNING, "HDCP-protected source (receiver status %02x/%02x): capture blocked, showing notice",
+              raw[0], raw[1]);
+    else
+        logf_(s, HDCAP_LOG_INFO, "HDCP no longer active (receiver status %02x/%02x): capture resumed", raw[0], raw[1]);
+    pthread_mutex_lock(&s->lock);
+    s->status.hdcp_blocked = r;
+    if (r)
+        snprintf(s->status.detail, sizeof s->status.detail, "HDCP-protected source: capture blocked");
+    hdcap_session_status copy = s->status;
+    pthread_mutex_unlock(&s->lock);
+    if (s->cb.on_status)
+        s->cb.on_status(&copy, s->cb.user);
 }
 
 static void *worker(void *data)
@@ -238,6 +297,14 @@ static void *worker(void *data)
                       ds.embedded_audio ? "embedded" : "line-in");
             }
         }
+        /* HDCP before the first frame, so no protected frame is ever delivered */
+        s->hdcp_blocked = 0;
+        pthread_mutex_lock(&s->lock);
+        s->status.hdcp_blocked = 0;
+        pthread_mutex_unlock(&s->lock);
+        int digital = input == HDCAP_INPUT_HDMI || input == HDCAP_INPUT_DVI;
+        if (digital)
+            hdcp_check(s, dev);
         const hdcap_mode *applied = NULL;
         if (input == HDCAP_INPUT_VGA || input == HDCAP_INPUT_COMPONENT) {
             size_t nm;
@@ -278,8 +345,12 @@ static void *worker(void *data)
         s->last_frame_ns = s->fps_window_ns = hdcap_now_ns();
         s->fps_frames = 0;
         set_status(s, HDCAP_SESSION_STREAMING, &sig, detail);
-        uint64_t next_check = hdcap_now_ns() + SIGNAL_CHECK_NS;
+        uint64_t next_check = hdcap_now_ns() + SIGNAL_CHECK_NS, next_hdcp = hdcap_now_ns() + HDCP_CHECK_NS;
         while (!should_leave(s)) {
+            if (digital && hdcap_now_ns() >= next_hdcp) {
+                next_hdcp = hdcap_now_ns() + HDCP_CHECK_NS;
+                hdcp_check(s, dev);
+            }
             if (s->picture_dirty && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO))
                 apply_picture(s, dev);
             if ((r = hdcap_stream_poll(dev, 100)) < 0) {
@@ -399,6 +470,7 @@ void hdcap_session_stop(hdcap_session *s)
         pthread_join(s->thread, NULL);
     pthread_cond_destroy(&s->cond);
     pthread_mutex_destroy(&s->lock);
+    free(s->notice);
     free(s);
 }
 
