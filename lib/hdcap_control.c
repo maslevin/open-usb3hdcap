@@ -125,6 +125,36 @@ static int mst_read(hdcap *dev, uint8_t bank, uint8_t reg, uint8_t *v)
     return r < 0 ? r : hdcap_i2c_read(dev, HDCAP_I2C_MST3367, reg, v);
 }
 
+/* Decode the MST3367 timing registers { 0x55, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5F } (pure: also
+ * used by tests/mst_decode_test.c on values read by the Windows driver). */
+void hdcap__mst_decode(const uint8_t raw[8], hdcap_signal *s)
+{
+    memcpy(s->raw, raw, 8);
+    int period = ((raw[1] & 0x3F) << 8) | raw[2];
+    int fperiod = ((raw[3] & 0x3F) << 8) | raw[4];
+    int lines = ((raw[5] & 0x07) << 8) | raw[6];
+    if (period <= 0 || period >= 0x3FFF || fperiod <= 0 || fperiod >= 0x3FFF)
+        return;     /* counters saturate without a signal */
+    s->hfreq_hz = MST_MEAS_CLOCK_HZ / period;
+    double field_hz = MST_MEAS_CLOCK_HZ / 1280.0 / fperiod;
+    s->interlaced = (raw[7] & 0x02) != 0;
+    if (s->interlaced) {
+        /* lines per field from the two rates: frame lines are odd (525, 625, 1125), so round
+         * the frame and halve, giving the 262/312/562 the mode table expects */
+        s->vfreq_hz = field_hz;
+        s->vtotal = (int)(2.0 * s->hfreq_hz / field_hz + 0.5) / 2;
+    } else {
+        /* the line count is exact; the field counter must agree (rejects transients) */
+        if (lines <= 100 || lines >= 1400)
+            return;
+        s->vtotal = lines;
+        s->vfreq_hz = s->hfreq_hz / lines;
+        if (fabs(s->vfreq_hz - field_hz) > field_hz * 0.02)
+            return;
+    }
+    s->locked = s->vfreq_hz > 20 && s->vfreq_hz < 200 && s->vtotal > 100;
+}
+
 int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s)
 {
     memset(s, 0, sizeof *s);
@@ -147,30 +177,35 @@ int hdcap_get_signal(hdcap *dev, hdcap_input in, hdcap_signal *s)
         s->standard = s->locked ? std[(sdt >> 4) & 7] : NULL;
         return 0;
     }
-    /* MST3367 bank 0 measurements: 0x57/0x58 = line period (12 bits, reference-clock counts),
-     * 0x5B/0x5C = lines per frame (or per field when interlaced). 0x55 = HDMI/ADC status. */
-    uint8_t p_hi, p_lo, v_hi, v_lo, st;
+    /* MST3367 measurements (bank 0), checked against the Windows driver's polling (captures
+     * c05/c11/c14/c15) and hdcapm's MST3367 driver:
+     *   0x57[5:0] 0x58  line period, reference-clock counts (14 bits: 480i/576i need bit 13)
+     *   0x59[5:0] 0x5A  field period, reference/1280 counts (~125 kHz)
+     *   0x5B[2:0] 0x5C  lines per field; analog interlaced sync inflates it (480i reads 271/272:
+     *                   equalizing and serration pulses count as lines), so it is only used
+     *                   for progressive signals
+     *   0x5F bit 1      interlaced
+     *   0x55            status
+     * HDMI/DVI only: 0x6A[3:0] 0x6B htotal (pixels), bank 2 0x28 0x29[4:0] active width. */
+    uint8_t p_hi, p_lo, f_hi, f_lo, v_hi, v_lo, il, st;
     if ((r = mst_read(dev, 0x00, 0x57, &p_hi)) < 0 || (r = mst_read(dev, 0x00, 0x58, &p_lo)) < 0 ||
+        (r = mst_read(dev, 0x00, 0x59, &f_hi)) < 0 || (r = mst_read(dev, 0x00, 0x5A, &f_lo)) < 0 ||
         (r = mst_read(dev, 0x00, 0x5B, &v_hi)) < 0 || (r = mst_read(dev, 0x00, 0x5C, &v_lo)) < 0 ||
-        (r = mst_read(dev, 0x00, 0x55, &st)) < 0)
+        (r = mst_read(dev, 0x00, 0x5F, &il)) < 0 || (r = mst_read(dev, 0x00, 0x55, &st)) < 0)
         return r;
-    int period = ((p_hi & 0x1F) << 8) | p_lo;
-    int vtotal = ((v_hi & 0x07) << 8) | v_lo;
-    s->raw[0] = st;
-    s->raw[1] = p_hi;
-    s->raw[2] = p_lo;
-    s->raw[3] = v_hi;
-    s->raw[4] = v_lo;
-    if (period > 0 && period < 0x1FFF && vtotal > 100 && vtotal < 1400) {
-        s->hfreq_hz = MST_MEAS_CLOCK_HZ / period;
-        s->vtotal = vtotal;
-        s->vfreq_hz = s->hfreq_hz / vtotal;
-        /* An interlaced source reports lines per field (262/263, 312/313, 562/563). */
-        s->interlaced = (vtotal == 262 || vtotal == 263 || vtotal == 312 || vtotal == 313 ||
-                         vtotal == 562 || vtotal == 563);
-        s->locked = s->vfreq_hz > 20 && s->vfreq_hz < 200;
+    uint8_t raw[8] = { st, p_hi, p_lo, f_hi, f_lo, v_hi, v_lo, il };
+    hdcap__mst_decode(raw, s);
+    if (s->locked && (in == HDCAP_INPUT_HDMI || in == HDCAP_INPUT_DVI)) {
+        uint8_t h_hi, h_lo, a_lo, a_hi;
+        if ((r = mst_read(dev, 0x00, 0x6A, &h_hi)) < 0 || (r = mst_read(dev, 0x00, 0x6B, &h_lo)) < 0 ||
+            (r = mst_read(dev, 0x02, 0x28, &a_lo)) < 0 || (r = mst_read(dev, 0x02, 0x29, &a_hi)) < 0)
+            return r;
+        int ht = ((h_hi & 0x0F) << 8) | h_lo, ha = ((a_hi & 0x1F) << 8) | a_lo;
+        if (ha > 0 && ht > ha && ht < 4096) {
+            s->htotal = ht;
+            s->hactive = ha;
+        }
     }
-    s->standard = NULL;
     return 0;
 }
 

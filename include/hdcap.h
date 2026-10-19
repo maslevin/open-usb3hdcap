@@ -76,8 +76,10 @@ typedef struct {
     int         vtotal;      /* lines per frame (per field for interlaced MST3367 sources) */
     double      hfreq_hz;
     double      vfreq_hz;    /* frame (or field) rate */
+    int         htotal;      /* HDMI/DVI: pixels per line incl. blanking, else 0 */
+    int         hactive;     /* HDMI/DVI: active pixels per line, else 0 */
     const char *standard;    /* analog SD standard (TW9900 inputs), else NULL */
-    uint8_t     raw[5];      /* status registers, for debugging */
+    uint8_t     raw[8];      /* status registers, for debugging */
 } hdcap_signal;
 
 const char *hdcap_input_name(hdcap_input in);

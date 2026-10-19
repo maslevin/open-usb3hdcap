@@ -161,11 +161,30 @@ CS53L21 (public datasheet DS700F2), as written before streaming:
 - 0x1C=0xC0: ALC enable bits.
 - 0xFF is not a CS53L21 register.
 
-MST3367 measurement (bank 0), verified live on HDMI 720p60 and against captured VGA 640x480:
-- 0x57/0x58 (12 bits) = line period in counts of a ~160.15 MHz reference (3559 at 45.0 kHz, 5089 at
-  31.47 kHz).
-- 0x5B/0x5C (11 bits) = lines per frame (750, 525); per field for interlaced sources.
-- 0x55 = status (0x7F on locked HDMI).
+MST3367 measurement registers. Checked against the Windows driver's polling in captures c05 (VGA
+480p), c11 (HDMI 720p) and c14/c15 (component 480p/480i), and live on HDMI 720p60, DVI 1080p60 and
+VGA 640x480 (2026-10-19). Several meanings were first suggested by Steven Toth's GPL hdcapm driver
+for the USB2HDCAPM, which uses the same receiver.
+
+| Bank/reg | Bits | Meaning | Examples |
+|---|---|---|---|
+| 0 / 0x57, 0x58 | 0x57[5:0]:0x58, **14 bits** | Line period in counts of a ~160.15 MHz reference | 3559 at 45.0 kHz, 5089 at 31.47 kHz, **10180 at 15.73 kHz** (480i: 0x57 = 0x27, which needs bit 13) |
+| 0 / 0x59, 0x5A | 14 bits | Field period in reference/1280 counts (~125.1 kHz) | 2085 = 60.00 Hz (720p60), 2087 = 59.94 Hz |
+| 0 / 0x5B, 0x5C | 0x5B[2:0]:0x5C | Lines per field | 750, 525, 1125. **Analog interlaced reads 271/272 for 480i**: equalizing and serration pulses count as lines, so use it only for progressive signals |
+| 0 / 0x5F | bit 1 | Interlaced | 480i 0x0A/0x0F (bits 0 and 2 alternate per field), progressive 0x00 |
+| 0 / 0x6A, 0x6B | 0x6A[3:0]:0x6B | HDMI/DVI horizontal total (pixels) | 1650 (720p60), 2200 (1080p60) |
+| 2 / 0x28, 0x29 | 0x29[4:0]:0x28 | HDMI/DVI active width (pixels) | 1280, 1920 |
+| 0 / 0x55 | | Status | 0x7F on locked HDMI/DVI, 0x03 on VGA/component |
+
+The driver computes the line rate from 0x57/0x58. The field rate comes from the line count when
+progressive (cross-checked against 0x59/0x5A) and from 0x59/0x5A when interlaced. Interlace comes from
+0x5F. For HDMI/DVI, the active width sets the expected stream rate exactly (any mode, not only table
+modes), and htotal x line rate gives the pixel clock (74.25 / 148.47 MHz measured). `tests/mst_decode_test.c`
+replays the captured register values.
+
+Further hdcapm claims, not yet checked here: bank 0 0x50 = chip revision 1; 0x55 & 0x3C = TMDS signal
+present; 0xB7 bit 1 = hot-plug off; 0xB8 0x10→0x00 HDCP reset; bank 2 0x07 0xF4→0x04 HDMI core reset;
+bank 1 0x01 bit 2 HDMI (vs DVI) and bit 0 HDCP active, bank 1 0x34 bit 7 HDCP.
 
 ### MST3367 analog sampling and crop window (verified live, 2026-10-18)
 Bank 0:

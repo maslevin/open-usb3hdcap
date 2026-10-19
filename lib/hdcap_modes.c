@@ -129,6 +129,9 @@ double hdcap_estimate_rate(hdcap_input in, const hdcap_signal *s, const hdcap_mo
         return 0;
     if (in == HDCAP_INPUT_COMPOSITE || in == HDCAP_INPUT_SVIDEO)
         return s->hfreq_hz * (1440 + 4) + 48000 * 4.5;
+    /* HDMI/DVI report their active width: exact for any mode, VESA/CEA or not */
+    if (!analog_mode && s->hactive > 0)
+        return s->hfreq_hz * (2.0 * s->hactive + 4) + 48000 * 4.5;
     const hdcap_mode *m = analog_mode;
     if (!m) {
         /* Digital inputs: the source's own active width; take it from the matching standard mode. */

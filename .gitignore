@@ -12,3 +12,4 @@ build-dist/
 dist/
 macos/build/
 tests/resample_sim
+tests/mst_decode_test

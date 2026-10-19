@@ -196,9 +196,14 @@ static void *worker(void *data)
                 break;
             continue;
         }
-        logf_(s, HDCAP_LOG_INFO, "signal: %s%s%d lines, %.3f kHz, %.2f Hz%s", sig.standard ? sig.standard : "",
-              sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "");
-        snprintf(detail, sizeof detail, "%d lines, %.3f kHz, %.2f Hz", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz);
+        char geom[64] = "";
+        if (sig.hactive)
+            snprintf(geom, sizeof geom, ", %d active / %d total pixels (%.2f MHz)", sig.hactive, sig.htotal,
+                     sig.htotal * sig.hfreq_hz / 1e6);
+        logf_(s, HDCAP_LOG_INFO, "signal: %s%s%d lines, %.3f kHz, %.2f Hz%s%s", sig.standard ? sig.standard : "",
+              sig.standard ? ", " : "", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? ", interlaced" : "", geom);
+        snprintf(detail, sizeof detail, "%d lines, %.3f kHz, %.2f Hz%s", sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz,
+                 sig.interlaced ? ", interlaced" : "");
 
         if (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) {
             int st = hdcap_setup_sd(dev, cfg.tv_standard, 2000);
@@ -264,8 +269,9 @@ static void *worker(void *data)
                 next_check = now + SIGNAL_CHECK_NS;
                 hdcap_signal cur;
                 if (hdcap_get_signal(dev, input, &cur) == 0 &&
-                    (!cur.locked || abs(cur.vtotal - locked_sig.vtotal) > 3 ||
-                     fabs(cur.hfreq_hz - locked_sig.hfreq_hz) > locked_sig.hfreq_hz * 0.01)) {
+                    (!cur.locked || abs(cur.vtotal - locked_sig.vtotal) > 3 || cur.interlaced != locked_sig.interlaced ||
+                     fabs(cur.hfreq_hz - locked_sig.hfreq_hz) > locked_sig.hfreq_hz * 0.01 ||
+                     (cur.hactive && locked_sig.hactive && abs(cur.hactive - locked_sig.hactive) > 8))) {
                     logf_(s, HDCAP_LOG_INFO, "signal changed (%d lines, %.3f kHz); restarting", cur.vtotal, cur.hfreq_hz / 1000);
                     break;
                 }

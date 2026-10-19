@@ -168,10 +168,14 @@ int main(int argc, char **argv)
             hdcap_close(dev);
             return 1;
         }
-        fprintf(stderr, "signal %s: %s%s%d lines, %.3f kHz, %.2f Hz%s%s  [raw %02x %02x %02x %02x %02x]\n",
+        char geom[64] = "";
+        if (sig.hactive)
+            snprintf(geom, sizeof geom, ", %d active / %d total (%.2f MHz)", sig.hactive, sig.htotal,
+                     sig.htotal * sig.hfreq_hz / 1e6);
+        fprintf(stderr, "signal %s: %s%s%d lines, %.3f kHz, %.2f Hz%s%s  [raw %02x %02x %02x %02x %02x %02x %02x %02x]\n",
                 r ? "locked" : "NOT locked", sig.standard ? sig.standard : "", sig.standard ? " " : "",
-                sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "",
-                "", sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4]);
+                sig.vtotal, sig.hfreq_hz / 1000, sig.vfreq_hz, sig.interlaced ? " interlaced" : "", geom,
+                sig.raw[0], sig.raw[1], sig.raw[2], sig.raw[3], sig.raw[4], sig.raw[5], sig.raw[6], sig.raw[7]);
         if (r == 1 && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO)) {
             int st = hdcap_setup_sd(dev, tv_std, 2000);
             if (st < 0)
