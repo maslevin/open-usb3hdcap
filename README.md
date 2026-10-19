@@ -20,7 +20,8 @@ From the [Releases](https://github.com/maslevin/open-usb3hdcap/releases) page (c
 - **USB3HDCAP-0.3.0.pkg**: camera, audio input and the background service. Double-click it,
   accept the notice, then open **USB3HDCAP** from Applications and click **Install Camera**. Approve
   it in System Settings → General → Login Items & Extensions. The app also picks the input and the
-  deinterlacing mode. To remove: in the app, click **Remove Camera**, then run
+  deinterlacing mode. **After updating**, open the app and click **Install Camera** again: macOS keeps
+  running the previous camera extension until the app asks it to replace it. To remove: in the app, click **Remove Camera**, then run
   `sudo "/Library/Application Support/open-usb3hdcap/uninstall.sh"`.
 - **usb3hdcap-obs-0.3.0-macos-universal.zip**: the OBS plugin. Unzip it, quit OBS and run
   `./install.sh` (see `INSTALL.md` inside).
