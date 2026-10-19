@@ -1,90 +1,116 @@
 # open-usb3hdcap
 
-An open-source, user-space driver for the **StarTech USB3HDCAP** USB 3.0 capture card
-(YUAN UB-530 design, USB ID `1164:F533`): HDMI, DVI, VGA, Component, Composite and S-Video,
-with stereo audio.
+An open-source driver for the **StarTech USB3HDCAP** USB 3.0 capture card (YUAN UB-530 design, USB ID
+`1164:F533`): HDMI, DVI, VGA, Component, Composite and S-Video, with stereo audio. The vendor only
+supports Windows; this project makes the card work on **macOS** without any vendor software, and its
+core library is portable C built on libusb.
 
-Status: **working on macOS** (Intel, macOS 15.8, OBS 32.2.2). Verified live:
-- HDMI 1280×720p60 with 48 kHz stereo audio.
-- DVI-D up to **1920×1080p60** (259.8 MB/s): 800×600, 1024×768, 1280×1024, 1440×900, 1080p24/60.
-- VGA 640×480 up to **1600×1200@60** (PC through a VGA converter; Dreamcast 640×480).
-- Component 480i and 480p, S-Video NTSC (DVD player), Composite NTSC (Dreamcast), Composite 240p
-  (Super Nintendo; shown line-doubled as 720×480 at 60 fps).
+## What you get on macOS
+- **A camera** named "USB3HDCAP" that any app can use: QuickTime, FaceTime, Zoom, browsers, OBS.
+  It uses a CoreMediaIO camera extension, with optional deinterlacing for VHS, 480i and 1080i sources.
+- **An audio input** named "USB3HDCAP" (Core Audio plug-in), with HDMI embedded audio or the analog
+  line-in.
+- **An OBS Studio plugin** ("USB3HDCAP Capture") with full control of input, timing and picture.
 
-The colour matrix and audio source are chosen automatically from the HDMI/DVI AVI InfoFrame and the
-receiver's audio status. Requires a USB 3 (SuperSpeed) connection: on USB 2.0 only SD
-composite/S-Video can fit. Input selection (HDMI, VGA, Component,
-Composite, S-Video) and signal detection are implemented. VGA/Component timings are identified
-against a table of VESA/CEA-861 modes (`lib/hdcap_modes.c`); the driver programs the ADC sampling
-PLL and crops to the active picture, with manual mode choice and position offsets. Verified
-live: VGA 640×480@60 (VESA and 27 MHz Dreamcast variant). The ADC front end (PLL gain, clamp,
-sync width) follows the mode's pixel clock, verified on VGA up to 162 MHz; component HD (720p/1080i/
-1080p) uses the same values but has no test source yet. Composite/S-Video has
-picture controls, a 576-line window for PAL/SECAM (not yet verified with a PAL source) and line doubling for
-240p/288p consoles. The demuxer is validated on
-VGA 640×480, HDMI 720p, NTSC composite/S-Video and component 480i/480p captures.
+Requirements: macOS 13 or later (Intel or Apple Silicon universal binaries), and a **USB 3** port and
+cable. On USB 2.0 only Composite and S-Video fit.
+
+## Install
+From the [Releases](https://github.com/maslevin/open-usb3hdcap/releases) page:
+- **USB3HDCAP-<version>.pkg**: camera, audio input and the background service. Double-click it,
+  accept the notice, then open **USB3HDCAP** from Applications and click **Install Camera**. Approve
+  it in System Settings → General → Login Items & Extensions. The app also picks the input and the
+  deinterlacing mode. To remove: in the app, click **Remove Camera**, then run
+  `sudo "/Library/Application Support/open-usb3hdcap/uninstall.sh"`.
+- **usb3hdcap-obs-<version>-macos-universal.zip**: the OBS plugin. Unzip it, quit OBS and run
+  `./install.sh` (see `INSTALL.md` inside).
+
+Both are signed with a Developer ID and notarized by Apple. Use one at a time: the camera/audio
+service and the OBS plugin cannot use the card simultaneously.
+
+## Tested hardware
+Verified live on an Intel Mac (macOS 15), with OBS 32.2.2, QuickTime and ffmpeg:
+
+| Input | Verified | Sources used |
+|---|---|---|
+| HDMI | 1280×720p60, embedded 48 kHz audio | Sega Genesis Mini |
+| DVI-D | 800×600 to 1920×1080p60 (VESA and CEA timings), RGB and YCbCr | PC (AMD Radeon HD 7000) |
+| VGA | 640×480 to 1600×1200 @ 60 Hz: 800×600, 1024×768, 1152×864, 1280×720, 1280×1024, 1360×768, 1440×900, 1600×900, 1600×1200 | PC through an active VGA converter; Sega Dreamcast VGA box (incl. its 27 MHz 640×480) |
+| Component | 480i, 480p | DVD player |
+| S-Video | NTSC 480i, picture controls | DVD player |
+| Composite | NTSC 480i (deinterlaced to 60 fps in the camera), **240p** (line-doubled to 720×480 at 60 fps) | VHS deck, Sega Dreamcast, Super Nintendo |
+| Audio | HDMI embedded, analog line-in; clock drift corrected (20-minute runs without glitches) | |
+| Robustness | input switching, unplug and replug | |
+
+### Help wanted: untested modes
+These are implemented but **nobody has been able to test them yet**. If you have the hardware, please
+open an issue with the **Test report** template. Working results are as valuable as failures.
+- **PAL and SECAM** (576i) on Composite or S-Video, and 288p PAL consoles. The 576-line picture
+  window is implemented from the decoder datasheet but never seen live.
+- **Component HD**: 720p, 1080i, 1080p (and 576i/576p).
+- **HDMI** modes other than 720p60: 1080i, 1080p, 576p, and sources using deep colour.
+- **Apple Silicon Macs** (all binaries are universal but have only run on Intel), and **sleep and
+  wake** while capturing.
+- VGA above 1600×1200, and other VGA sources (older PCs, scan converters).
+- Other StarTech/YUAN models built on the same chips (for example the StarTech XCAPTURE-1).
+- Linux: the core library and `hdcap-capture` build there, but haven't been run.
+
+### Known limitations
+- 1600×900@60 and 1280×960@60 have identical analog timings. Auto picks 1600×900; choose 1280×960
+  manually (OBS: Analog timing).
+- HDCP-protected HDMI sources are not expected to work.
+- Composite/S-Video NTSC frames are 720×478, two lines fewer than the Windows driver delivers.
+
+## Build from source
+Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
+
+    make
+    ./hdcap-capture -i hdmi -t 5 -n 3 -o out      # inputs: hdmi dvi vga component composite s-video
+    ./hdcap-capture -i vga -m "27 MHz" -H 0 -V 0 -o out   # force an analog mode, nudge the window
+    ./hdcap-capture -i composite -P -9,121,128,0,2 -o out  # picture: brightness, contrast, saturation, hue, sharpness
+
+- **OBS plugin, development build** (OBS 28+): `brew install cmake simde`, then
+  `INC=$(obs-plugin/fetch-libobs-headers.sh)`, `cmake -S obs-plugin -B build -DLIBOBS_INCLUDE_DIR="$INC"`
+  and `cmake --build build && cmake --install build`.
+- **OBS plugin package**: `packaging/package-macos.sh`. This builds a universal build with bundled
+  libusb, ad-hoc signed; set `SIGN_IDENTITY` and `NOTARY_PROFILE` for a signed and notarized build.
+- **macOS camera, audio and service**: `make -C macos`. For signed builds and the installer
+  (`make -C macos pkg`), see [docs/MACOS_DRIVERS.md](docs/MACOS_DRIVERS.md) and
+  `macos/signing.mk.example`.
 
 ## Layout
 | Path | Contents |
 |---|---|
-| `include/hdcap.h`, `lib/` | `libhdcap`: device access (libusb), sequence runner, isochronous streaming, stream demuxer |
-| `obs-plugin/` | OBS Studio source plugin ("USB3HDCAP Capture"): YUY2 video + 48 kHz stereo audio |
-| `macos/` | System-wide macOS support (in progress): `hdcapd` daemon, Camera Extension + host app, Core Audio HAL plug-in. See `docs/MACOS_DRIVERS.md` |
-| `tools/hdcap-capture.c` | CLI: run sequences, stream, save PPM frames + WAV |
-| `lib/hdcap_modes.c` | VESA/CEA analog mode table, mode matching, PLL divider and crop-window programming |
-| `lib/hdcap_control.c`, `lib/hdcap_tables.c` | Init, input selection, signal detection; per-input register tables (generated by `tools/gen_tables.py`) |
-| `tools/pcap2seq.py` | Turn a USBPcap capture window into a sequence file |
-| `sequences/` | Bootstrap sequence files (see `sequences/README.md`) |
-| `tests/demux_file.c` | Feed a raw payload file through the demuxer |
-| `lib/hdcap_resample.c`, `tests/resample_sim.c` | Drift-correcting resampler (card audio clock → host clock) and its simulation test |
-| `docs/PROTOCOL.md` | The observed protocol: control requests, chips, stream format |
+| `include/hdcap.h`, `lib/` | `libhdcap`: device access (libusb), input selection, signal detection, analog timing modes, isochronous streaming, demuxer, capture session, audio drift resampler, deinterlacer |
+| `obs-plugin/` | OBS Studio source plugin |
+| `macos/` | `hdcapd` service, camera extension and host app, Core Audio plug-in, installer ([docs/MACOS_DRIVERS.md](docs/MACOS_DRIVERS.md)) |
+| `tools/` | `hdcap-capture` CLI; `gen_tables.py` / `pcap2seq.py` (register tables and sequences from USB captures) |
+| `tests/` | Offline tests: decoding of captured register values, demuxer, resampler, deinterlacer |
+| `docs/PROTOCOL.md` | The protocol as observed: control requests, chips and registers, stream format |
 
-## Build (macOS or Linux)
-Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
+## How this was made
+The card's protocol was worked out for interoperability. We recorded the Windows driver's USB traffic
+for each input and mode, and analysed the Windows driver binary to understand the purpose of what it
+sends. The driver itself is written from those observations and the public datasheets of the chips
+(TW9900, CS53L21). **No vendor code, firmware or datasheet text is included**, and the card needs no
+firmware from the host. Some register details were cross-checked against two open-source Linux drivers,
+credited in [docs/PROTOCOL.md](docs/PROTOCOL.md):
+- [stoth68000/hdcapm](https://github.com/stoth68000/hdcapm) (same receiver chip)
+- [mlaux/usb3hdcap](https://github.com/mlaux/usb3hdcap) (same card)
 
-    make
-    ./hdcap-capture -i hdmi -t 5 -n 3 -o out      # inputs: hdmi vga component composite s-video
-    ./hdcap-capture -i vga -m "27 MHz" -H 0 -V 0 -o out   # force an analog mode, nudge the window
-
-## Clean-room note
-This driver is written from protocol observations and public chip documentation, not from the
-vendor driver's code. The vendor driver is not redistributed here.
-
-## Install (users)
-Download the release zip and follow its `INSTALL.md` (also in `packaging/INSTALL.md`).
-
-## Packaging (maintainers)
-    packaging/package-macos.sh      # -> dist/usb3hdcap-obs-<version>-macos-universal.zip
-
-This builds a universal (arm64 + x86_64) plugin against OBS 30.0.0 headers (supported range:
-OBS 30+), bundles a universal libusb (`packaging/build-libusb-universal.sh`, checksum-verified),
-and signs ad-hoc. Set `SIGN_IDENTITY` (Developer ID Application) and `NOTARY_PROFILE` (a
-`notarytool` keychain profile) for a signed and notarized build.
-
-## OBS plugin development build (macOS, OBS 28+; tested with OBS 32.2.2)
-Requires CMake, libusb, pkgconf and SIMDe (`brew install libusb pkgconf simde cmake`).
-
-    INC=$(obs-plugin/fetch-libobs-headers.sh)        # headers for the installed OBS version
-    cmake -S obs-plugin -B build -DLIBOBS_INCLUDE_DIR="$INC"
-    cmake --build build && cmake --install build      # -> ~/Library/Application Support/obs-studio/plugins
-
-In OBS, add a **USB3HDCAP Capture** source and pick the input in its properties.
+No code was copied from either.
 
 ## License
 Copyright (C) 2026 Matt Slevinsky.
 
-open-usb3hdcap is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, either version 2 of the
-License, or (at your option) any later version (`SPDX-License-Identifier: GPL-2.0-or-later`).
-See [LICENSE](LICENSE). It is distributed WITHOUT ANY WARRANTY.
-
-Release packages bundle [libusb](https://libusb.info) (LGPL-2.1-or-later). Chip datasheets and the
-vendor driver are not part of this repository.
+open-usb3hdcap is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 2 of the License,
+or (at your option) any later version (`SPDX-License-Identifier: GPL-2.0-or-later`). See
+[LICENSE](LICENSE). Release packages bundle [libusb](https://libusb.info) (LGPL-2.1-or-later).
 
 ## Disclaimer
-This is an independent project, not made, endorsed or supported by StarTech.com, YUAN High-Tech or
-any chip vendor; trademarks belong to their owners. The software is provided **as is, without warranty
-of any kind**. The signed macOS binaries are distributed free of charge by Islandia Logic Ltd. as a
-convenience only, with no warranty, support obligation or liability, to the fullest extent permitted
-by law. See [NOTICE](NOTICE) for the full terms (also shown by the installer) and [LICENSE](LICENSE)
-(GPL-2.0-or-later).
+This is an independent project, not made, endorsed or supported by StarTech.com, YUAN High-Tech or any
+chip vendor; trademarks belong to their owners. The software is provided **as is, without warranty of
+any kind**. Islandia Logic Ltd. distributes the signed macOS binaries free of charge as a convenience
+only, with no warranty, support obligation or liability, to the fullest extent permitted by law. See
+[NOTICE](NOTICE) for the full terms (also shown by the installer) and [LICENSE](LICENSE).

@@ -1,0 +1,59 @@
+name: Test report
+description: Report how the driver worked with your source, input or Mac (working results are welcome too)
+title: "[Test] <input> <mode> from <source>"
+labels: ["test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Untested areas we especially want reports on: PAL/SECAM, component HD,
+        HDMI modes other than 720p60, Apple Silicon Macs, and sleep/wake. See the README.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options: ["Works", "Works with problems", "Does not work"]
+    validations: { required: true }
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input
+      options: [HDMI, DVI, VGA, Component, Composite, S-Video]
+    validations: { required: true }
+  - type: input
+    id: source
+    attributes:
+      label: Source device and output mode
+      placeholder: "e.g. PAL DVD player, 576i; Xbox 360 component 1080i"
+    validations: { required: true }
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you captured
+      options: ["Camera / audio (USB3HDCAP.pkg)", "OBS plugin", "hdcap-capture CLI"]
+    validations: { required: true }
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: "e.g. MacBook Air M2, macOS 15.6"
+    validations: { required: true }
+  - type: input
+    id: card
+    attributes:
+      label: Capture card model
+      placeholder: "StarTech USB3HDCAP (or another model, please name it)"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Picture, sound, colours, position, frame rate. Screenshots help.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        - Camera/audio: the last ~30 lines of /Library/Logs/hdcapd.log
+        - OBS: the lines containing [usb3hdcap] from Help > Log Files > Show Log Files
+        - CLI: the output of hdcap-capture
+      render: text
