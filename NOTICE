@@ -1,0 +1,55 @@
+open-usb3hdcap (USB3HDCAP driver for macOS) - IMPORTANT NOTICE
+DRAFT - pending review
+
+Please read this notice before installing or using this software.
+
+1. INDEPENDENT PROJECT
+
+This software is an independent open-source project. It is not made, endorsed, sponsored, certified
+or supported by StarTech.com, YUAN High-Tech Development Co., Ltd., Infineon/Cypress, MStar, Renesas
+(Intersil/Techwell), Cirrus Logic, Apple or any other manufacturer. Product names and trademarks
+belong to their respective owners. They are used only to identify compatible hardware.
+
+2. DISTRIBUTION BY ISLANDIA LOGIC LTD.
+
+Islandia Logic Ltd. code-signs and notarizes the macOS binaries and installer only so that macOS will
+run them. Islandia Logic Ltd. distributes them free of charge, as a convenience. It does not sell
+the software or license it for a fee, and has no obligation to support, maintain, update or correct
+it. Signing and distribution do not create any warranty, endorsement, support commitment or other
+obligation on the part of Islandia Logic Ltd.
+
+3. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE AND NON-INFRINGEMENT. THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE
+SOFTWARE IS WITH YOU.
+
+4. LIMITATION OF LIABILITY
+
+TO THE FULLEST EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL ISLANDIA LOGIC LTD., ITS
+DIRECTORS, OFFICERS, SHAREHOLDERS, EMPLOYEES OR AGENTS, OR ANY AUTHOR OR CONTRIBUTOR OF THE
+SOFTWARE, BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, CONSEQUENTIAL, PUNITIVE OR EXEMPLARY. THIS INCLUDES LOSS OF DATA OR
+RECORDINGS, DAMAGE TO HARDWARE OR SOFTWARE, AND BUSINESS INTERRUPTION. THIS APPLIES TO ANY CLAIM
+ARISING FROM OR RELATED TO THE DOWNLOAD, INSTALLATION, USE OR INABILITY TO USE THE SOFTWARE,
+WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE), STRICT LIABILITY OR OTHERWISE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGES. WHERE APPLICABLE LAW DOES NOT ALLOW LIABILITY TO BE EXCLUDED,
+LIABILITY IS LIMITED TO THE SMALLEST EXTENT THAT LAW PERMITS.
+
+5. YOUR RESPONSIBILITY
+
+The installer adds a background system service, an audio driver (Core Audio plug-in) and a camera
+system extension to your Mac. You are responsible for:
+- backing up your system and your recordings
+- deciding whether this software is suitable for your use
+- complying with the laws that apply to the material you capture, including copyright and
+  copy-protection rules
+
+6. LICENCE
+
+This software is free software, licensed under the GNU General Public License, version 2 or (at your
+option) any later version. Nothing in this notice limits the rights the GPL gives you to use,
+study, modify or redistribute the software. Source code: https://github.com/maslevin/open-usb3hdcap
+
+The full licence text follows.

@@ -80,3 +80,11 @@ See [LICENSE](LICENSE). It is distributed WITHOUT ANY WARRANTY.
 
 Release packages bundle [libusb](https://libusb.info) (LGPL-2.1-or-later). Chip datasheets and the
 vendor driver are not part of this repository.
+
+## Disclaimer
+This is an independent project, not made, endorsed or supported by StarTech.com, YUAN High-Tech or
+any chip vendor; trademarks belong to their owners. The software is provided **as is, without warranty
+of any kind**. The signed macOS binaries are distributed free of charge by Islandia Logic Ltd. as a
+convenience only, with no warranty, support obligation or liability, to the fullest extent permitted
+by law. See [NOTICE](NOTICE) for the full terms (also shown by the installer) and [LICENSE](LICENSE)
+(GPL-2.0-or-later).

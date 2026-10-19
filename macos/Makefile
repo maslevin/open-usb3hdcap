@@ -18,6 +18,9 @@ CODESIGN = codesign --force --sign -
 else
 CODESIGN = codesign --force --options runtime --timestamp --sign "$(SIGN_IDENTITY)"
 endif
+# Debug symbol tables carry absolute build paths (the builder's home directory): strip them from
+# everything that ships, before signing.
+STRIPDBG = strip -S
 SUBST    = sed -e 's/@TEAM_ID@/$(TEAM_ID)/g' -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g'
 # hdcapd ships alone in /Library, so it is universal with libusb linked statically
 # (packaging/build-libusb-universal.sh); without that library it is built natively against pkg-config libusb.
@@ -39,6 +42,8 @@ $(OUT)/hdcapd: hdcapd/hdcapd.c common/hdcapd_protocol.h $(LIB_SRC) ../include/hd
 	@mkdir -p $(OUT)
 	$(CC) -O2 -g -Wall -Wextra -std=gnu11 $(UNIV) -mmacosx-version-min=13.0 -I../include -I$(LIBUSB_U)/include/libusb-1.0 \
 		-o $@ $< $(LIB_SRC) $(LIBUSB_U)/lib/libusb-1.0.a $(FW) -framework IOKit -framework Security
+	rm -rf $@.dSYM
+	$(STRIPDBG) $@
 	$(CODESIGN) --identifier $(BUNDLE_ID).hdcapd $@
 else
 $(OUT)/hdcapd: hdcapd/hdcapd.c common/hdcapd_protocol.h ../libhdcap.a
@@ -58,6 +63,7 @@ $(HAL): hal/hdcap_hal.c hal/Info.plist common/hdcapd_protocol.h
 	$(CC) -O2 -g -Wall -Wextra -std=gnu11 -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 -bundle \
 		-o $@/Contents/MacOS/USB3HDCAP hal/hdcap_hal.c -framework CoreFoundation -framework CoreAudio
 	rm -rf $@/Contents/MacOS/*.dSYM   # one-step -g builds leave debug symbols next to the binary
+	$(STRIPDBG) $@/Contents/MacOS/USB3HDCAP
 	$(CODESIGN) $@
 
 $(OUT)/hal-harness: hal/hal-harness.c
@@ -85,6 +91,7 @@ $(APP): app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) $(wildcard 
 	$(if $(PROFILE_EXT),cp "$(PROFILE_EXT)" $(EXT)/Contents/embedded.provisionprofile)
 	$(if $(PROFILE_APP),cp "$(PROFILE_APP)" $@/Contents/embedded.provisionprofile)
 	rm -rf $@/Contents/MacOS/*.dSYM $(EXT)/Contents/MacOS/*.dSYM
+	$(STRIPDBG) $@/Contents/MacOS/USB3HDCAP $(EXT)/Contents/MacOS/$(BUNDLE_ID).camera
 	$(CODESIGN) --entitlements $(OUT)/camera.entitlements $(EXT)
 ifeq ($(SIGN_IDENTITY),-)
 	@# ad-hoc: restricted entitlements (system-extension.install) would make AMFI refuse to launch the app

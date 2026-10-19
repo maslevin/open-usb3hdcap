@@ -8,16 +8,26 @@
 set -e
 : "${OUT:?}" "${BUNDLE_ID:?}" "${VERSION:?}" "${INSTALLER_IDENTITY:?set INSTALLER_IDENTITY in signing.mk}"
 LABEL=org.open-usb3hdcap.hdcapd
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SUPPORT="Library/Application Support/open-usb3hdcap"
 ROOT="$OUT/pkgroot"
 SCRIPTS="$OUT/pkgscripts"
 PKG="$OUT/USB3HDCAP-$VERSION.pkg"
 
-rm -rf "$ROOT" "$SCRIPTS" "$OUT/component.pkg" "$OUT/components.plist" "$PKG"
+RES="$OUT/pkgres"
+rm -rf "$ROOT" "$SCRIPTS" "$RES" "$OUT/component.pkg" "$OUT/components.plist" "$OUT/distribution.xml" "$PKG"
 mkdir -p "$ROOT/Applications" "$ROOT/$SUPPORT" "$ROOT/Library/LaunchDaemons" "$ROOT/Library/Audio/Plug-Ins/HAL" "$SCRIPTS"
 ditto "$OUT/USB3HDCAP.app" "$ROOT/Applications/USB3HDCAP.app"
 ditto "$OUT/USB3HDCAP.driver" "$ROOT/Library/Audio/Plug-Ins/HAL/USB3HDCAP.driver"
 install -m 755 "$OUT/hdcapd" "$ROOT/$SUPPORT/hdcapd"
+install -m 644 "$REPO/NOTICE" "$ROOT/$SUPPORT/NOTICE.txt"
+install -m 644 "$REPO/LICENSE" "$ROOT/$SUPPORT/LICENSE.txt"
+
+# Nothing that ships may carry the builder's paths (debug symbols embed absolute source paths).
+leaks=$(find "$ROOT" -type f -perm -u+x -exec grep -l -a -E "/Users/|$HOME" {} + 2>/dev/null || true)
+if [ -n "$leaks" ]; then
+  echo "refusing to package: build paths found in" >&2; echo "$leaks" >&2; exit 1
+fi
 
 cat > "$ROOT/Library/LaunchDaemons/$LABEL.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
@@ -72,7 +82,18 @@ i=0; while /usr/libexec/PlistBuddy -c "Print :$i" "$OUT/components.plist" >/dev/
 done
 pkgbuild --root "$ROOT" --component-plist "$OUT/components.plist" --scripts "$SCRIPTS" \
   --identifier "$BUNDLE_ID.pkg" --version "$VERSION" --install-location / "$OUT/component.pkg" >/dev/null
-productbuild --package "$OUT/component.pkg" --sign "$INSTALLER_IDENTITY" --timestamp "$PKG" >/dev/null
+# Product archive with a licence screen (NOTICE + GPL) that must be accepted before installing.
+mkdir -p "$RES"
+{ cat "$REPO/NOTICE"; printf '\n\n'; cat "$REPO/LICENSE"; } > "$RES/license.txt"
+productbuild --synthesize --package "$OUT/component.pkg" "$OUT/distribution.xml" >/dev/null
+python3 - "$OUT/distribution.xml" <<'PY'
+import sys, re
+p = sys.argv[1]; s = open(p).read()
+s = re.sub(r'(<installer-gui-script[^>]*>)', r'\1\n    <title>USB3HDCAP</title>\n    <license file="license.txt"/>', s, count=1)
+open(p, 'w').write(s)
+PY
+productbuild --distribution "$OUT/distribution.xml" --resources "$RES" --package-path "$OUT" \
+  --sign "$INSTALLER_IDENTITY" --timestamp "$PKG" >/dev/null
 pkgutil --check-signature "$PKG" | sed -n '1,4p'
 
 if [ -n "$NOTARY_PROFILE" ]; then
