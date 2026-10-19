@@ -197,17 +197,24 @@ Bank 0: 0x03 PLL gain, 0x05/0x06 clamp delay/width, 0x07 sync output width, 0x39
 | Pixel clock | 0x03 | 0x05 | 0x06 | 0x07 | Evidence |
 |---|---|---|---|---|---|
 | < 20 MHz (480i/576i) | 08 | 08 | 08 | 18 | equals the Windows state in captures c14/c15; live component 480i |
-| 20–45 MHz (480p, VGA 640x480–800x600) | 20 | 08 | 08 | 18 (VGA: table's 20) | VGA capture c05 (~27 MHz); live component 480p and VGA 640x480 |
-| 45–105 MHz (720p, 1080i, VESA) | 58 | 38 | 20 | 30 | Windows driver's component table, via mlaux/usb3hdcap; not verified here |
-| > 105 MHz (1080p, VESA) | E8 | 38 | 30 | A0 | same; not verified here |
+| 20–45 MHz (480p, VGA 640x480–800x600) | 20 | 08 | 08 | 18 (VGA: table's 20) | VGA capture c05 (~27 MHz); live component 480p, VGA 640x480 and 800x600 |
+| 45–105 MHz (720p, 1080i, VESA) | 58 | 38 | 20 | 30 | Windows driver's component table, via mlaux/usb3hdcap; **live VGA**: 1024x768, 1152x864, 1280x720, 1360x768 (65–85.5 MHz) |
+| > 105 MHz (1080p, VESA) | E8 | 38 | 30 | A0 | same; **live VGA**: 1280x1024, 1440x900, 1600x900, 1600x1200 (106.5–162 MHz). Component HD not verified |
 
 VGA clamps differently from component (0x2C = 0xCC, 0x39 = 0x00 in the VGA table), so 0x39 is
-only written for component. Before this, every mode kept the input table's 480i or 640x480 value.
+only written for component.
+
+VGA verified live on 2026-10-19 (a Windows PC through an active VGA converter): every mode from 640x480 to
+1600x1200@60 at 60 fps, sharp and correctly placed. 1600x900@60 (reduced blanking) and 1280x960@60
+have identical totals (1800 x 1000, 108 MHz). Bank 0 0x14 does not tell them apart (it does not
+track sync polarity), so Auto picks 1600x900 and 1280x960 must be chosen manually. Before this, every mode kept the input table's 480i or 640x480 value.
 
 ### MST3367 analog sampling and crop window (verified live, 2026-10-18)
 Bank 0:
 - 0x01, 0x02[7:4]: ADC PLL divider = h-total − 1 (12 bits).
-- 0x81 + 0x82[7:4]: window horizontal start (sync + back porch − 1).
+- 0x80[3:0] + 0x81: window horizontal start (sync + back porch − 1). (Corrected 2026-10-19: an earlier
+  reading put bits 11:8 in 0x82[7:4]. That was indistinguishable while starts stayed below 256, and
+  shifted VGA 1024x768, start 295, by 256 samples.)
 - 0x82[3:0] + 0x83: window width. **The width sets the line length in the USB stream** (720 → 1440 B,
   640 → 1280 B).
 - 0x84: window vertical start (per field).

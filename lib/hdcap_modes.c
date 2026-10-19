@@ -8,8 +8,11 @@
  *
  * MST3367 registers (bank 0), from observed behaviour (docs/PROTOCOL.md):
  *   0x01, 0x02[7:4]  ADC PLL divider = h-total - 1 (12 bits)
- *   0x81, 0x82[7:4]  window horizontal start (sync + back porch - 1)
+ *   0x80[3:0], 0x81  window horizontal start (sync + back porch - 1)
  *   0x82[3:0], 0x83  window width in samples
+ *   (Starts above 255 confirmed live: VGA 1024x768, start 295. An earlier layout with the start's
+ *   high bits in 0x82[7:4] shifted such pictures by 256 samples. 0x80 is in the Windows tables,
+ *   and mlaux/usb3hdcap uses it.)
  *   0x84             window vertical start (lines from sync, per field)
  *   0x85[5]          interlaced (field) mode;  0x85[3:0], 0x86  window height (per field)
  * Changing the width changes the line length in the USB stream; the demuxer follows automatically.
@@ -44,6 +47,11 @@ static const hdcap_mode modes[] = {
     { "1024x768@70",            1328, 1024, 280, 806,  768, 35,  75.000, 0, 0 },
     { "1024x768@75",            1312, 1024, 272, 800,  768, 31,  78.750, 0, 0 },
     { "1024x768@85",            1376, 1024, 304, 808,  768, 39,  94.500, 0, 0 },
+    { "1152x864@60 (CVT)",      1520, 1152, 304, 895,  864, 28,  81.750, 0, 0 },
+    /* 1600x900@60 (reduced blanking) and 1280x960@60 share every total (1800 x 1000, 108 MHz), so
+     * line and frame rates cannot tell them apart; the first entry wins in auto mode. 1600x900 is
+     * the more common of the two today; choose 1280x960 manually. */
+    { "1600x900@60 (reduced blanking)", 1800, 1600, 176, 1000, 900, 99, 108.000, 0, 0 },
     { "1280x960@60",            1800, 1280, 424, 1000, 960, 39, 108.000, 0, 0 },
     { "1280x1024@60",           1688, 1280, 360, 1066, 1024, 41, 108.000, 0, 0 },
     { "1280x1024@75",           1688, 1280, 392, 1066, 1024, 41, 135.000, 0, 0 },
@@ -148,8 +156,9 @@ int hdcap_set_mode(hdcap *dev, hdcap_input in, const hdcap_mode *m, int hoffset,
         return r;
     if ((r = mst_write(dev, 0x01, (uint8_t)(div >> 4))) < 0 ||
         (r = mst_write(dev, 0x02, (uint8_t)(((div & 0x0F) << 4) | (r02 & 0x0F)))) < 0 ||
+        (r = mst_write(dev, 0x80, (uint8_t)((hs >> 8) & 0x0F))) < 0 ||
         (r = mst_write(dev, 0x81, (uint8_t)hs)) < 0 ||
-        (r = mst_write(dev, 0x82, (uint8_t)(((hs >> 8) & 0x0F) << 4 | ((m->hactive >> 8) & 0x0F)))) < 0 ||
+        (r = mst_write(dev, 0x82, (uint8_t)((m->hactive >> 8) & 0x0F))) < 0 ||
         (r = mst_write(dev, 0x83, (uint8_t)m->hactive)) < 0 ||
         (r = mst_write(dev, 0x84, (uint8_t)vs)) < 0 ||
         (r = mst_write(dev, 0x85, (uint8_t)((m->interlaced ? 0x20 : 0x00) | ((m->vactive >> 8) & 0x0F)))) < 0 ||
