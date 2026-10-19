@@ -45,6 +45,9 @@ static dispatch_queue_t g_q;              /* serialises client list, session lif
 static client *g_clients;
 static hdcap_session *g_session;
 static hdcap_session_config g_cfg = { HDCAP_INPUT_HDMI, -1, 0, 0, HDCAP_STD_AUTO, 0, { 0, 0, 0, 0, 0 } };
+/* Deinterlacing for camera clients (hdcap_deint_mode). Not a session setting: it is stamped on every
+ * frame message and applied by the client, so changing it never restarts capture. */
+static _Atomic int g_deint = HDCAP_DEINT_ADAPTIVE;
 static uint64_t g_idle_token;             /* cancels pending idle releases */
 
 /* Audio ring (shared memory) */
@@ -84,6 +87,7 @@ static void load_config(void)
         else if (!strcmp(k, "h_offset")) g_cfg.h_offset = v;
         else if (!strcmp(k, "v_offset")) g_cfg.v_offset = v;
         else if (!strcmp(k, "tv_standard") && v >= 0 && v <= HDCAP_STD_AUTO) g_cfg.tv_standard = (hdcap_std)v;
+        else if (!strcmp(k, "deinterlace") && v >= HDCAP_DEINT_OFF && v <= HDCAP_DEINT_ADAPTIVE) g_deint = v;
     }
     fclose(f);
 }
@@ -95,8 +99,8 @@ static void save_config(void)
         logmsg("cannot write %s: %s", g_config_path, strerror(errno));
         return;
     }
-    fprintf(f, "input=%d\nanalog_mode=%d\nh_offset=%d\nv_offset=%d\ntv_standard=%d\n", g_cfg.input, g_cfg.analog_mode,
-            g_cfg.h_offset, g_cfg.v_offset, g_cfg.tv_standard);
+    fprintf(f, "input=%d\nanalog_mode=%d\nh_offset=%d\nv_offset=%d\ntv_standard=%d\ndeinterlace=%d\n", g_cfg.input,
+            g_cfg.analog_mode, g_cfg.h_offset, g_cfg.v_offset, g_cfg.tv_standard, (int)g_deint);
     fclose(f);
 }
 
@@ -117,6 +121,7 @@ static void put_status(xpc_object_t d, const hdcap_session_status *st)
     xpc_dictionary_set_int64(d, "vtotal", st->signal.vtotal);
     xpc_dictionary_set_double(d, "hfreq_hz", st->signal.hfreq_hz);
     xpc_dictionary_set_double(d, "vfreq_hz", st->signal.vfreq_hz);
+    xpc_dictionary_set_int64(d, "deinterlace", g_deint);
 }
 
 static void current_status(hdcap_session_status *st)
@@ -196,6 +201,7 @@ static void on_frame(const hdcap_frame *f, uint64_t now_ns, void *user)
     xpc_dictionary_set_int64(msg, "width", f->width);
     xpc_dictionary_set_int64(msg, "height", f->height);
     xpc_dictionary_set_bool(msg, "interlaced", f->interlaced);
+    xpc_dictionary_set_int64(msg, "deinterlace", g_deint);
     xpc_dictionary_set_uint64(msg, "seq", g_seq++);
     xpc_dictionary_set_uint64(msg, "time_ns", now_ns);
     dispatch_async(g_q, ^{
@@ -303,6 +309,15 @@ static void handle_message(client *c, xpc_object_t msg)
             hdcap_session_set_config(g_session, &g_cfg);
         logmsg("config: %s, analog mode %d, offset %+d/%+d, standard %s", hdcap_input_name(g_cfg.input), g_cfg.analog_mode,
                g_cfg.h_offset, g_cfg.v_offset, hdcap_std_name(g_cfg.tv_standard));
+    } else if (!strcmp(cmd, "set-deinterlace")) {
+        int64_t v = xpc_dictionary_get_int64(msg, "mode");
+        if (v >= HDCAP_DEINT_OFF && v <= HDCAP_DEINT_ADAPTIVE) {
+            g_deint = (int)v;
+            save_config();
+            logmsg("deinterlace: %s", v == HDCAP_DEINT_OFF ? "off" : v == HDCAP_DEINT_BOB ? "bob" : "adaptive");
+        } else {
+            ok = 0;
+        }
     } else if (strcmp(cmd, "get-status") != 0) {
         ok = 0;
     }

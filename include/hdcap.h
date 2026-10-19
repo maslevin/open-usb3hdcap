@@ -293,6 +293,22 @@ size_t hdcap_resampler_process(hdcap_resampler *r, const int16_t *in, size_t fra
                                int16_t *out, size_t out_cap, uint64_t *out_ts_ns);
 void hdcap_resampler_get_stats(const hdcap_resampler *r, hdcap_resampler_stats *st);
 
+/* ---------- Deinterlacing ---------- */
+
+/* Turns each woven interlaced frame (as delivered with hdcap_frame.interlaced: field 0 on even lines,
+ * captured first) into two progressive frames, one per field, at the full field rate. ADAPTIVE keeps
+ * still detail and interpolates motion, using past fields only (no added latency); BOB always
+ * interpolates. One instance per stream; reset it after a discontinuity. */
+typedef enum { HDCAP_DEINT_OFF = 0, HDCAP_DEINT_BOB = 1, HDCAP_DEINT_ADAPTIVE = 2 } hdcap_deint_mode;
+typedef struct hdcap_deinterlacer hdcap_deinterlacer;
+hdcap_deinterlacer *hdcap_deint_new(void);
+void hdcap_deint_free(hdcap_deinterlacer *d);
+void hdcap_deint_reset(hdcap_deinterlacer *d);
+/* woven: packed YUYV rows of `stride` bytes. out0 (field 0, earlier) and out1 (field 1) receive
+ * width x height YUYV rows of out_stride bytes. Returns 2, or -1 on allocation failure. */
+int hdcap_deint_process(hdcap_deinterlacer *d, hdcap_deint_mode mode, const uint8_t *woven, int stride, int width,
+                        int height, uint8_t *out0, uint8_t *out1, int out_stride);
+
 /* ---------- Helpers ---------- */
 
 /* Convert packed YUYV (BT.601 limited range) to RGB24. */

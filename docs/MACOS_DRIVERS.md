@@ -85,6 +85,7 @@ Build everything with `make -C macos` (needs `make` at the top level for `libhdc
 | hdcapd | **verified**: 1280×720 @ 60 fps, 48 kHz audio ring, no gaps, input switching, idle release |
 | Camera pipeline (`HDCapFrameSource`) | **verified** via `frame-source-test`: 60 fps, ~1 ms capture→output, correct colour |
 | HAL plug-in | **working**: installed system-wide, recorded in QuickTime; card-rate clock tracking verified over 20 minutes |
+| Camera deinterlacing | `lib/hdcap_deint.c`, applied before scaling: motion-adaptive (past fields only, no added latency), bob or off, chosen in USB3HDCAP.app and stamped on each frame by hdcapd (`set-deinterlace`). 480i becomes 59.94 progressive frames/s. Offline (`tests/deint_file`): combing 39.6→3.6 on composite and 50.8→4.2 on S-Video, field order checked; verified in-process on a live VHS tape |
 | Camera extension + host app | **working**: Developer ID signed, notarized, activated; QuickTime records from it (2026-10-19). Also verified in-process via `camera-harness` |
 
 ### Signed builds (Developer ID)

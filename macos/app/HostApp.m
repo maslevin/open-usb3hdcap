@@ -20,7 +20,7 @@ static NSString *const kInputNames[] = { @"HDMI", @"VGA", @"Component", @"Compos
 @implementation AppDelegate {
     NSWindow *_win;
     NSTextField *_status, *_extStatus;
-    NSPopUpButton *_input;
+    NSPopUpButton *_input, *_deint;
     xpc_connection_t _conn;
     NSTimer *_timer;
 }
@@ -46,6 +46,18 @@ static NSTextField *label(NSString *s, NSRect r)
     _input.target = self;
     _input.action = @selector(inputChanged:);
     [v addSubview:_input];
+
+    /* camera deinterlacing for interlaced sources (480i/576i/1080i); values = hdcap_deint_mode */
+    [v addSubview:label(@"Deinterlace:", NSMakeRect(250, 172, 85, 22))];
+    _deint = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(330, 168, 115, 28) pullsDown:NO];
+    [_deint addItemWithTitle:@"Off"];
+    [_deint addItemWithTitle:@"Bob"];
+    [_deint addItemWithTitle:@"Adaptive"];
+    [_deint selectItemAtIndex:2];
+    _deint.toolTip = @"Interlaced video (VHS, 480i, 1080i) in the camera: Adaptive keeps still detail and removes comb lines on motion; Bob interpolates every line; Off shows woven frames.";
+    _deint.target = self;
+    _deint.action = @selector(deintChanged:);
+    [v addSubview:_deint];
 
     _status = label(@"hdcapd: connecting…", NSMakeRect(20, 120, 420, 40));
     _status.maximumNumberOfLines = 2;
@@ -97,6 +109,8 @@ static NSTextField *label(NSString *s, NSRect r)
         if (xpc_get_type(r) != XPC_TYPE_DICTIONARY) return;
         int64_t in = xpc_dictionary_get_int64(r, "input");
         if (in >= 0 && in < 6 && self->_input.indexOfSelectedItem != in) [self->_input selectItemAtIndex:in];
+        int64_t dm = xpc_dictionary_get_int64(r, "deinterlace");
+        if (dm >= 0 && dm <= 2 && self->_deint.indexOfSelectedItem != dm) [self->_deint selectItemAtIndex:dm];
         const char *state = xpc_dictionary_get_string(r, "state_name"), *detail = xpc_dictionary_get_string(r, "detail");
         int64_t w = xpc_dictionary_get_int64(r, "width"), h = xpc_dictionary_get_int64(r, "height");
         NSString *s = [NSString stringWithFormat:@"hdcapd: %s", state ?: "?"];
@@ -106,6 +120,16 @@ static NSTextField *label(NSString *s, NSRect r)
         if (detail && *detail) s = [s stringByAppendingFormat:@"\n%s", detail];
         self->_status.stringValue = s;
     });
+}
+
+- (void)deintChanged:(id)sender
+{
+    (void)sender;
+    if (!_conn) return;
+    xpc_object_t m = xpc_dictionary_create(NULL, NULL, 0);
+    xpc_dictionary_set_string(m, "cmd", "set-deinterlace");
+    xpc_dictionary_set_int64(m, "mode", _deint.indexOfSelectedItem);
+    xpc_connection_send_message_with_reply(_conn, m, dispatch_get_main_queue(), ^(xpc_object_t r) { (void)r; [self refresh]; });
 }
 
 - (void)inputChanged:(id)sender

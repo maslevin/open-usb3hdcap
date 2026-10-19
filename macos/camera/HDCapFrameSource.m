@@ -2,6 +2,7 @@
  * Copyright (C) 2026 Matt Slevinsky */
 #import "HDCapFrameSource.h"
 #include "../common/hdcapd_protocol.h"
+#include "hdcap.h"
 
 #include <xpc/xpc.h> /* before IOSurface: enables IOSurfaceLookupFromXPCObject */
 #import <IOSurface/IOSurfaceAPI.h>
@@ -23,6 +24,11 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
     BOOL _running;
     int _geomSrcW, _geomSrcH, _geomDstW, _geomDstH;   /* geometry the transfer session is set up for */
     NSDictionary *_srcAperture;
+    /* deinterlacing (interlaced sources): two progressive frames per woven frame */
+    hdcap_deinterlacer *_deint;
+    CVPixelBufferPoolRef _fieldPool;                 /* 'yuvs' at the source size */
+    int _fieldW, _fieldH, _deintMode;
+    uint64_t _lastWovenNs;
 }
 
 - (instancetype)initWithWidth:(int)width height:(int)height fps:(int)fps
@@ -41,6 +47,8 @@ static uint64_t host_now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RA
 - (void)dealloc
 {
     [self stop];
+    hdcap_deint_free(_deint);
+    if (_fieldPool) CVPixelBufferPoolRelease(_fieldPool);
     if (_xfer) { VTPixelTransferSessionInvalidate(_xfer); CFRelease(_xfer); }
     if (_pool) CVPixelBufferPoolRelease(_pool);
     if (_black) CVPixelBufferRelease(_black);
@@ -203,10 +211,79 @@ static NSDictionary *aperture(int w, int h)
 
     IOSurfaceRef surf = IOSurfaceLookupFromXPCObject(xpc_dictionary_get_value(ev, "surface"));
     if (!surf) return;
-    CVPixelBufferRef src = NULL, dst = NULL;
+    CVPixelBufferRef src = NULL;
     CVPixelBufferCreateWithIOSurface(NULL, surf, NULL, &src);
     CFRelease(surf);
     if (!src) return;
+    uint64_t t = xpc_dictionary_get_uint64(ev, "time_ns");
+    if (!t) t = host_now_ns();
+    int mode = (int)xpc_dictionary_get_int64(ev, "deinterlace");
+    if (xpc_dictionary_get_bool(ev, "interlaced") && mode != HDCAP_DEINT_OFF)
+        [self deinterlace:src time:t mode:mode];
+    else
+        [self emitSource:src time:t];
+    CVPixelBufferRelease(src);
+}
+
+/* Woven frame -> one progressive frame per field, before scaling (scaling first would smear the
+ * fields together). Field 0 was captured one field period before the frame completed. */
+- (void)deinterlace:(CVPixelBufferRef)src time:(uint64_t)t mode:(int)mode
+{
+    int w = (int)CVPixelBufferGetWidth(src), h = (int)CVPixelBufferGetHeight(src);
+    if (!_deint) _deint = hdcap_deint_new();
+    if (!_fieldPool || w != _fieldW || h != _fieldH) {
+        if (_fieldPool) CVPixelBufferPoolRelease(_fieldPool);
+        _fieldPool = NULL;
+        NSDictionary *attrs = @{ (id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_422YpCbCr8_yuvs),
+                                 (id)kCVPixelBufferWidthKey: @(w), (id)kCVPixelBufferHeightKey: @(h),
+                                 (id)kCVPixelBufferIOSurfacePropertiesKey: @{} };
+        CVPixelBufferPoolCreate(NULL, NULL, (__bridge CFDictionaryRef)attrs, &_fieldPool);
+        _fieldW = w; _fieldH = h;
+        hdcap_deint_reset(_deint);
+    }
+    /* field period from the frame spacing (two fields per woven frame); reset history after a gap
+     * or a mode change so stale fields never mix in */
+    uint64_t nominal = h >= 540 ? 20000000ull : 16683350ull;
+    uint64_t period = nominal;
+    if (_lastWovenNs && t > _lastWovenNs) {
+        uint64_t half = (t - _lastWovenNs) / 2;
+        if (half > nominal * 3 / 4 && half < nominal * 5 / 4) period = half;
+        else hdcap_deint_reset(_deint);
+    }
+    if (mode != _deintMode) { hdcap_deint_reset(_deint); _deintMode = mode; }
+    _lastWovenNs = t;
+
+    CVPixelBufferRef f0 = NULL, f1 = NULL;
+    if (!_fieldPool || CVPixelBufferPoolCreatePixelBuffer(NULL, _fieldPool, &f0) != kCVReturnSuccess ||
+        CVPixelBufferPoolCreatePixelBuffer(NULL, _fieldPool, &f1) != kCVReturnSuccess) {
+        if (f0) CVPixelBufferRelease(f0);
+        [self emitSource:src time:t];
+        return;
+    }
+    CVPixelBufferLockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+    CVPixelBufferLockBaseAddress(f0, 0);
+    CVPixelBufferLockBaseAddress(f1, 0);
+    int ok = CVPixelBufferGetBytesPerRow(f0) == CVPixelBufferGetBytesPerRow(f1) &&
+             hdcap_deint_process(_deint, (hdcap_deint_mode)mode, CVPixelBufferGetBaseAddress(src),
+                                 (int)CVPixelBufferGetBytesPerRow(src), w, h, CVPixelBufferGetBaseAddress(f0),
+                                 CVPixelBufferGetBaseAddress(f1), (int)CVPixelBufferGetBytesPerRow(f0)) == 2;
+    CVPixelBufferUnlockBaseAddress(f1, 0);
+    CVPixelBufferUnlockBaseAddress(f0, 0);
+    CVPixelBufferUnlockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+    if (ok) {
+        [self emitSource:f0 time:t - period];
+        [self emitSource:f1 time:t];
+    } else {
+        [self emitSource:src time:t];
+    }
+    CVPixelBufferRelease(f0);
+    CVPixelBufferRelease(f1);
+}
+
+/* Colour tags, geometry and scaling into the output format, then hand the frame on. */
+- (void)emitSource:(CVPixelBufferRef)src time:(uint64_t)t
+{
+    CVPixelBufferRef dst = NULL;
     /* hdcapd passes the source's YCbCr through: BT.601 for SD (<= 576 lines: analog decoders, SD
      * HDMI/component), BT.709 for HD, the same rule as the OBS plugin. VideoToolbox converts to the
      * BT.709 output; a wrong tag shows SD colours oversaturated and hue-shifted. */
@@ -218,11 +295,9 @@ static NSDictionary *aperture(int w, int h)
     if (CVPixelBufferPoolCreatePixelBuffer(NULL, _pool, &dst) == kCVReturnSuccess &&
         VTPixelTransferSessionTransferImage(_xfer, src, dst) == noErr) {
         [self tagBuffer:dst];
-        uint64_t t = xpc_dictionary_get_uint64(ev, "time_ns");
         _lastRealNs = host_now_ns();
-        _frameHandler(dst, t ? t : _lastRealNs, NO);
+        _frameHandler(dst, t, NO);
     }
     if (dst) CVPixelBufferRelease(dst);
-    CVPixelBufferRelease(src);
 }
 @end

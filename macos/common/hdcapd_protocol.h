@@ -10,14 +10,17 @@
  *       After a hello with video=true the daemon pushes frame messages on the connection.
  *   { "cmd": "get-status" }                     reply: status fields
  *   { "cmd": "set-config", "input", "analog_mode", "h_offset", "v_offset", "tv_standard" (int64) }
+ *   { "cmd": "set-deinterlace", "mode" (int64, hdcap_deint_mode) }   persisted; no capture restart
  *
  * Daemon -> client:
  *   { "type": "frame", "surface": <IOSurface xpc>, "width", "height", "interlaced",
+ *     "deinterlace" (int64: what the client should apply to interlaced frames),
  *     "seq" (uint64), "time_ns" (uint64, hdcap_now_ns at capture) }
  *   { "type": "status", status fields }        (on changes)
  *
  * Status fields: "state" (int64, hdcap_session_state), "state_name", "input", "width", "height",
- *   "interlaced", "fps" (double), "link_mbps", "detail" (string), "vtotal", "hfreq_hz", "vfreq_hz".
+ *   "interlaced", "fps" (double), "link_mbps", "detail" (string), "vtotal", "hfreq_hz", "vfreq_hz",
+ *   "deinterlace".
  *
  * Frames: IOSurfaces from a round-robin pool owned by the daemon, pixel format 'yuvs'
  * (kCVPixelFormatType_422YpCbCr8_yuvs: Y0 Cb Y1 Cr). A client must finish with (or copy) a
