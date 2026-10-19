@@ -77,7 +77,7 @@ $(OUT)/frame-source-test: camera/frame-source-test.m camera/HDCapFrameSource.m c
 
 # Universal libhdcap is not needed: the extension and app only speak XPC to hdcapd.
 CAM_SRC  = camera/main.m camera/CameraExtension.m camera/HDCapFrameSource.m ../lib/hdcap_deint.c
-$(OUT)/AppIcon.icns: app/icon/AppIcon.svg app/icon/make-icns.sh
+$(OUT)/AppIcon.icns: app/icon/AppIcon.svg app/icon/make-icns.sh app/icon/render-svg.m
 	@mkdir -p $(OUT)
 	app/icon/make-icns.sh app/icon/AppIcon.svg $@
 
