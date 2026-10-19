@@ -40,6 +40,7 @@ struct hdcap_demux {
     int      field0_lines, field0_line_bytes, have_field0;
     uint64_t f1_seen_at;            /* frame counter when a field-1 line was last seen */
     int      line_double;           /* progressive SD (240p/288p): one frame per field, lines doubled */
+    int      ld_lines;              /* largest field seen while line doubling (output height / 2) */
     uint8_t *frame;
     hdcap_demux_stats stats;
 };
@@ -75,6 +76,7 @@ void hdcap_demux_free(hdcap_demux *dx)
 void hdcap_demux_set_line_double(hdcap_demux *dx, int on)
 {
     dx->line_double = on;
+    dx->ld_lines = 0;
     dx->have_field0 = 0;
 }
 
@@ -103,11 +105,27 @@ static void field_done(hdcap_demux *dx)
         return;
     }
     if (dx->line_double) {
-        for (int i = 0; i < lines; i++) {
-            memcpy(dx->frame + (size_t)(2 * i) * lb, dx->field + (size_t)i * lb, lb);
-            memcpy(dx->frame + (size_t)(2 * i + 1) * lb, dx->field + (size_t)i * lb, lb);
+        /* The decoder still alternates its field window: on a SNES the "fields" carry 239 and 240
+         * lines, top-aligned. Keep the output height constant (largest field seen) and fill the
+         * missing bottom line with black, so consumers see a fixed 720x480. */
+        int std_lines = lines > 264 ? 288 : 240;   /* 240p / 288p */
+        if (abs(lines - std_lines) <= 4 && std_lines > dx->ld_lines)
+            dx->ld_lines = std_lines;
+        if (lines > dx->ld_lines)
+            dx->ld_lines = lines;
+        for (int i = 0; i < dx->ld_lines; i++) {
+            uint8_t *d0 = dx->frame + (size_t)(2 * i) * lb, *d1 = d0 + lb;
+            if (i < lines) {
+                memcpy(d0, dx->field + (size_t)i * lb, lb);
+            } else {
+                for (int k = 0; k < lb; k += 2) {
+                    d0[k] = 0x10;
+                    d0[k + 1] = 0x80;
+                }
+            }
+            memcpy(d1, d0, lb);
         }
-        emit(dx, dx->frame, lb / 2, 2 * lines, 0);
+        emit(dx, dx->frame, lb / 2, 2 * dx->ld_lines, 0);
         return;
     }
     int interlaced = dx->stats.frames < dx->f1_seen_at + 4 && dx->f1_seen_at != 0;

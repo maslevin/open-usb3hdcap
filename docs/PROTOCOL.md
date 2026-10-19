@@ -258,8 +258,11 @@ same line rate and line count as VESA 640×480@60, so it needs a manual choice.
   follows the datasheet. **Not yet verified with a PAL source.**
 - **Progressive sources.** STATUS2 0x31 bit 3 (NINTL) = non-interlaced (datasheet). For 240p/288p
   (retro consoles) libhdcap emits each field as a frame with lines doubled (720x480/576), instead of
-  weaving fields from different frames. Verified: a 480i DVD reads 0x31 = 0x90 (interlaced);
-  **not yet verified with a 240p source.**
+  weaving fields from different frames. Verified live: a 480i DVD reads 0x31 = 0x90 (interlaced);
+  a **Super Nintendo** on composite reads 0x31 = 0x08 (non-interlaced) and gives clean 720x480p at
+  60 fps. The decoder still alternates its field window on 240p (239 and 240 active lines,
+  top-aligned, content in the same place), so the demuxer pads to a constant 240 (288) lines per
+  field.
 - **Picture controls** (datasheet): 0x10 brightness (signed), 0x11 contrast (%, 0x64 = 100%), 0x12
   bits 3:0 sharpness (upper bits 0x50 kept), 0x13/0x14 U/V gain (0x80 = 100%), 0x15 hue (signed,
   NTSC only). The Windows defaults, BRIGHT 0xF7, CONTRAST 0x79, SAT 0x80, HUE 0x00, SHARPNESS 0x52, are
