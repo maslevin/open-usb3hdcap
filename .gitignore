@@ -17,3 +17,4 @@ tests/demux_linedouble_test
 macos/signing.mk
 macos/profiles/
 tests/deint_file
+.DS_Store

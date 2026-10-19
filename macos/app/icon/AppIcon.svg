@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later
+     Copyright (C) 2026 Matt Slevinsky
+     USB3HDCAP app icon: the capture unit's case in three-quarter view (glossy black top, brushed
+     silver body; HDMI, DVI-I in a recessed plate, mini-DIN AV port, LED) under a red/green/blue
+     video waveform. Original artwork, no vendor branding. 1024x1024 macOS icon grid (824 px
+     rounded square). Rendered to AppIcon.icns by make-icns.sh. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="1" stop-color="#0B1F4D"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="silverFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F3F4F6"/>
+      <stop offset="0.55" stop-color="#C9CDD3"/>
+      <stop offset="1" stop-color="#8E949C"/>
+    </linearGradient>
+    <linearGradient id="silverSide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#B7BCC3"/>
+      <stop offset="1" stop-color="#7C828A"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5B6270"/>
+      <stop offset="1" stop-color="#2B3038"/>
+    </linearGradient>
+    <linearGradient id="topBlack" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A2F37"/>
+      <stop offset="0.45" stop-color="#0B0D11"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="1" y2="0.6">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="led" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#E0F2FE"/>
+      <stop offset="0.35" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- background tile -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="420" rx="185" fill="url(#sheen)"/>
+
+  <!-- video waveform (R, G, B) -->
+  <g fill="none" stroke-linecap="round" stroke-width="20">
+    <path d="M232 262 C 292 182, 352 182, 412 262 S 532 342, 592 262 S 712 182, 792 262" stroke="#F43F5E"/>
+    <path d="M232 290 C 292 210, 352 210, 412 290 S 532 370, 592 290 S 712 210, 792 290" stroke="#22C55E"/>
+    <path d="M232 318 C 292 238, 352 238, 412 318 S 532 398, 592 318 S 712 238, 792 318" stroke="#60A5FA"/>
+  </g>
+
+  <!-- shadow -->
+  <ellipse cx="520" cy="782" rx="380" ry="44" fill="url(#shadow)"/>
+
+  <!-- silver body: right side, then front -->
+  <path d="M790 596 L866 470 Q872 460 872 474 L872 612 Q872 626 864 638 L800 744 Q794 752 790 744 Z" fill="url(#silverSide)"/>
+  <path d="M168 596 H790 V728 Q790 752 766 752 H192 Q168 752 168 728 Z" fill="url(#silverFront)"/>
+  <line x1="172" y1="600" x2="788" y2="600" stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="3"/>
+
+  <!-- rim under the top, then the glossy black top (rounded parallelogram) -->
+  <path d="M206 600 Q160 600 186 562 L262 452 Q280 430 312 430 H836 Q884 430 860 466 L788 572 Q770 600 736 600 Z" fill="url(#rim)"/>
+  <path d="M212 586 Q172 586 195 552 L268 448 Q284 426 312 426 H830 Q872 426 851 458 L781 562 Q764 586 732 586 Z" fill="url(#topBlack)"/>
+  <path d="M212 586 Q172 586 195 552 L268 448 Q284 426 312 426 H830 Q872 426 851 458 L781 562 Q764 586 732 586 Z" fill="url(#gloss)"/>
+
+  <!-- HDMI -->
+  <path d="M206 652 H316 V680 L304 696 H218 L206 680 Z" fill="#15181D"/>
+  <rect x="222" y="666" width="78" height="9" rx="2" fill="#C8A64A"/>
+
+  <!-- DVI-I in its recessed black plate with screw posts -->
+  <rect x="348" y="622" width="262" height="98" rx="6" fill="#121418"/>
+  <circle cx="371" cy="671" r="10" fill="#9CA3AF"/>
+  <circle cx="371" cy="671" r="4" fill="#4B5563"/>
+  <circle cx="587" cy="671" r="10" fill="#9CA3AF"/>
+  <circle cx="587" cy="671" r="4" fill="#4B5563"/>
+  <path d="M396 640 H562 V692 L551 704 H407 L396 692 Z" fill="#ECE8DC"/>
+  <g fill="#8B8678">
+    <rect x="408" y="650" width="9" height="9" rx="2"/><rect x="426" y="650" width="9" height="9" rx="2"/>
+    <rect x="444" y="650" width="9" height="9" rx="2"/><rect x="462" y="650" width="9" height="9" rx="2"/>
+    <rect x="480" y="650" width="9" height="9" rx="2"/><rect x="498" y="650" width="9" height="9" rx="2"/>
+    <rect x="408" y="667" width="9" height="9" rx="2"/><rect x="426" y="667" width="9" height="9" rx="2"/>
+    <rect x="444" y="667" width="9" height="9" rx="2"/><rect x="462" y="667" width="9" height="9" rx="2"/>
+    <rect x="480" y="667" width="9" height="9" rx="2"/><rect x="498" y="667" width="9" height="9" rx="2"/>
+    <rect x="408" y="684" width="9" height="9" rx="2"/><rect x="426" y="684" width="9" height="9" rx="2"/>
+    <rect x="444" y="684" width="9" height="9" rx="2"/><rect x="462" y="684" width="9" height="9" rx="2"/>
+    <rect x="480" y="684" width="9" height="9" rx="2"/><rect x="498" y="684" width="9" height="9" rx="2"/>
+    <rect x="522" y="668" width="28" height="6" rx="2"/>
+    <rect x="533" y="657" width="6" height="28" rx="2"/>
+  </g>
+
+  <!-- mini-DIN AV port: silver ring, black socket, pins -->
+  <circle cx="668" cy="660" r="40" fill="#D9DCE1" stroke="#7C828A" stroke-width="4"/>
+  <circle cx="668" cy="660" r="28" fill="#15181D"/>
+  <g fill="#9CA3AF">
+    <circle cx="656" cy="652" r="4"/><circle cx="668" cy="649" r="4"/><circle cx="680" cy="652" r="4"/>
+    <circle cx="656" cy="668" r="4"/><circle cx="680" cy="668" r="4"/>
+    <rect x="664" y="666" width="8" height="10" rx="2"/>
+  </g>
+
+  <!-- LED -->
+  <circle cx="752" cy="640" r="26" fill="url(#led)"/>
+  <circle cx="752" cy="640" r="7" fill="#E0F2FE"/>
+</svg>

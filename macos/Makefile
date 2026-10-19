@@ -77,9 +77,14 @@ $(OUT)/frame-source-test: camera/frame-source-test.m camera/HDCapFrameSource.m c
 
 # Universal libhdcap is not needed: the extension and app only speak XPC to hdcapd.
 CAM_SRC  = camera/main.m camera/CameraExtension.m camera/HDCapFrameSource.m ../lib/hdcap_deint.c
-$(APP): app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) $(wildcard signing.mk) camera/HDCapFrameSource.h camera/CameraExtension.h camera/Info.plist camera/camera.entitlements common/hdcapd_protocol.h
+$(OUT)/AppIcon.icns: app/icon/AppIcon.svg app/icon/make-icns.sh
+	@mkdir -p $(OUT)
+	app/icon/make-icns.sh app/icon/AppIcon.svg $@
+
+$(APP): $(OUT)/AppIcon.icns app/HostApp.m app/Info.plist app/app.entitlements $(CAM_SRC) $(wildcard signing.mk) camera/HDCapFrameSource.h camera/CameraExtension.h camera/Info.plist camera/camera.entitlements common/hdcapd_protocol.h
 	rm -rf $@
-	@mkdir -p $@/Contents/MacOS $(EXT)/Contents/MacOS
+	@mkdir -p $@/Contents/MacOS $@/Contents/Resources $(EXT)/Contents/MacOS
+	cp $(OUT)/AppIcon.icns $@/Contents/Resources/AppIcon.icns
 	$(SUBST) camera/Info.plist > $(EXT)/Contents/Info.plist
 	$(CC) -O2 -g -Wall -Wextra -fobjc-arc -I../include $(UNIV) -mmacosx-version-min=13.0 -o $(EXT)/Contents/MacOS/$(BUNDLE_ID).camera \
 		$(CAM_SRC) $(CAMFW) -framework CoreMediaIO -framework CoreAudio
