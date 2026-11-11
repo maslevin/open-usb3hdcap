@@ -142,6 +142,15 @@ credited in [docs/PROTOCOL.md](docs/PROTOCOL.md):
 
 No code was copied from either.
 
+## Contributors
+Thank you to everyone who has improved the driver:
+- **Matthew Demicco** ([@Armitage64](https://github.com/Armitage64)): 15 kHz RGB (240p/288p) on VGA and
+  Component with line doubling, the Sharp X68000 and Atari System 2 modes, automatic ADC sampling phase,
+  `hdcap-capture -p`/`-T`, and the libusb `pipe2` fix for older macOS
+  ([#3](https://github.com/maslevin/open-usb3hdcap/pull/3)).
+
+Contributions are welcome: open a pull request, or a **Test report** issue for results on your hardware.
+
 ## License
 Copyright (C) 2026 Matt Slevinsky.
 
