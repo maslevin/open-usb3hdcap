@@ -40,6 +40,9 @@ Verified live on an Intel Mac (macOS 15), with OBS 32.2.2, QuickTime and ffmpeg:
 | Component | 480i, 480p | DVD player |
 | S-Video | NTSC 480i, picture controls | DVD player |
 | Composite | NTSC 480i (deinterlaced to 60 fps in the camera), **240p** (line-doubled to 720×480 at 60 fps) | VHS deck, Sega Dreamcast, Super Nintendo |
+| VGA, 15 kHz RGB | **240p** (60 Hz) and **288p** (50 Hz), detected automatically and line-doubled to 720×480 / 720×576 (4:3): Genesis H40 (320×224), Amiga NTSC hires (640×200) and PAL lores; 200-line modes up to 1200×200, 1200×400 interlaced, switching between modes while capturing. OBS plugin and `hdcap-capture` on an Apple Silicon Mac (M1 Max, macOS 26.6.2) | MiSTer FPGA analog VGA output with `vga_scaler=0`, `forced_scandoubler=0` (Genesis core with the 240p Test Suite, Amiga core) |
+| VGA, Sharp X68000 | **31 kHz** 768×512 (Human68k), 512×512 and 384×512, all sampled at the core's pixel clock (1 or 2 samples per pixel); **24 kHz** (Marble Madness, 640×448 window); **15 kHz** 256×256 (Space Harrier, via the 240p mode). Automatic sampling phase, steady text; switching between cores and back. OBS plugin and `hdcap-capture`, Apple Silicon Mac | MiSTer FPGA X68000 core, same output settings |
+| VGA, 25 kHz arcade | Atari System 2 medium resolution, 512×384 at 59.94 Hz, sampled at its pixel clock (OBS, `hdcap-capture`) | MiSTer FPGA 720 Degrees core |
 | Audio | HDMI embedded, analog line-in; clock drift corrected (20-minute runs without glitches) | |
 | Robustness | input switching, unplug and replug | |
 
@@ -50,9 +53,16 @@ open an issue with the **Test report** template. Working results are as valuable
   window is implemented from the decoder datasheet but never seen live.
 - **Component HD**: 720p, 1080i, 1080p (and 576i/576p).
 - **HDMI** modes other than 720p60: 1080i, 1080p, 576p, and sources using deep colour.
-- **Apple Silicon Macs** (all binaries are universal but have only run on Intel), and **sleep and
-  wake** while capturing.
+- **Apple Silicon Macs**: the OBS plugin and `hdcap-capture` have run on an M1 Max (macOS 26.6.2);
+  the camera/audio service has not. **Sleep and wake** while capturing.
 - VGA above 1600×1200, and other VGA sources (older PCs, scan converters).
+- 15 kHz RGB beyond what is listed above: other computers, consoles and arcade boards, 576i, the
+  camera/audio service with 15 kHz sources, and **240p/288p on Component** (same modes and line
+  doubling as VGA, but never seen live).
+- A **real Sharp X68000** (not the MiSTer core): it runs 31 kHz at about 55 Hz and 31.5 kHz, and
+  its 512-dot modes use a slower pixel clock, so it needs modes of its own. Interlaced X68000
+  modes have not been tried on the core either.
+- Automatic sampling phase on PC VGA sources at their native resolutions.
 - Other StarTech/YUAN models built on the same chips (for example the StarTech XCAPTURE-1).
 - Linux: the core library and `hdcap-capture` build there, but haven't been run.
 
@@ -65,6 +75,30 @@ open an issue with the **Test report** template. Working results are as valuable
   capture blocked" notice and audio is muted. Unprotected content from the same device (for example
   a streaming box's menus) captures normally.
 - Composite/S-Video NTSC frames are 720×478, two lines fewer than the Windows driver delivers.
+- 15 kHz RGB (240p/288p) is sampled at the standard 13.5 MHz, 720 samples per line, not at the
+  source's own pixel clock: about 2 samples per Genesis H40 pixel, slightly under 1 per Amiga hires
+  pixel. Vertical edges can be a sample soft, and the finest horizontal detail of hires modes is
+  not fully resolved. The picture position was tuned on a MiSTer FPGA (Genesis and Amiga cores);
+  other sources may sit a few samples off centre (adjust with the horizontal offset). Interlaced
+  15 kHz sources rely on the receiver's interlace flag; if it read a 480i or 576i source as
+  progressive, each field would be shown line-doubled instead of woven.
+- **Sampling phase (VGA/Component):** for modes sampled at the source's own pixel clock (PC/VESA
+  modes, the X68000 modes) the driver picks the sharpest sampling phase with the capture chip's
+  sharpness meter. The first time such a mode appears this takes about 1.2 s before the picture
+  starts; after that the mode's phase is remembered (until OBS or the service restarts) and set at
+  once. The phase is checked again 3 and 10 s after a start (holding the last frame for a sixth of
+  a second), and for two minutes the driver watches how much detail the picture has, which doesn't
+  disturb it: a picture with much more detail than the one the phase was found on (a desktop after
+  a boot screen) is measured again, holding the last frame for about a second. A picture with less
+  detail never changes the phase. Broadcast-rate modes (240p, 288p, 480i/p, 576i/p, HD) keep the
+  phase the input tables set, as before: they sample at 13.5 MHz (or the HD rates) whatever the
+  source's pixel clock, so there is no right phase, and on undersampled detail such as Amiga hires
+  the meter preferred the phase that flickered most.
+- The X68000 and Atari System 2 modes match the **MiSTer FPGA cores'** timing; the original
+  machines may differ slightly. The X68000's 768×512 line is a fraction of a sample longer or
+  shorter than the 1104 samples the chip can be set to, so even at the best phase
+  about 0.1 % of the pixels of a static screen are not perfectly steady. The 24 kHz window is 640
+  wide; software using a wider picture would be cropped (adjust the horizontal offset).
 
 ## Build from source
 Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
@@ -72,6 +106,9 @@ Requires libusb ≥ 1.0.27 and pkg-config (`brew install libusb pkgconf`).
     make
     ./hdcap-capture -i hdmi -t 5 -n 3 -o out      # inputs: hdmi dvi vga component composite s-video
     ./hdcap-capture -i vga -m "27 MHz" -H 0 -V 0 -o out   # force an analog mode, nudge the window
+    ./hdcap-capture -i vga -p 25 -o out           # force the ADC sampling phase (0-63; default automatic)
+    ./hdcap-capture -i vga -T 1104,768,263,512,41 -o out   # try a custom timing: samples per line, window
+                                                           # width, start, height, first line
     ./hdcap-capture -i composite -P -9,121,128,0,2 -o out  # picture: brightness, contrast, saturation, hue, sharpness
 
 - **OBS plugin, development build** (OBS 28+): `brew install cmake simde`, then

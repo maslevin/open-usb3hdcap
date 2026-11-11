@@ -16,6 +16,7 @@
 
 #define MAX_LINE_BYTES  8192   /* 4096 px */
 #define MAX_FIELD_LINES 1200
+#define LD_SETTLE_FIELDS 30    /* 0.5 s at 60 Hz: line-doubled output height changes after this */
 
 enum state { S_SYNC, S_HDR0, S_TYPE, S_ARG, S_VIDEO, S_AUDIO };
 
@@ -40,7 +41,8 @@ struct hdcap_demux {
     int      field0_lines, field0_line_bytes, have_field0;
     uint64_t f1_seen_at;            /* frame counter when a field-1 line was last seen */
     int      line_double;           /* progressive SD (240p/288p): one frame per field, lines doubled */
-    int      ld_lines;              /* largest field seen while line doubling (output height / 2) */
+    int      ld_lines;              /* output height / 2 while line doubling */
+    int      ld_cand, ld_cand_n;    /* a different field height, and for how many fields in a row */
     uint8_t *frame;
     hdcap_demux_stats stats;
 };
@@ -77,6 +79,7 @@ void hdcap_demux_set_line_double(hdcap_demux *dx, int on)
 {
     dx->line_double = on;
     dx->ld_lines = 0;
+    dx->ld_cand_n = 0;
     dx->have_field0 = 0;
 }
 
@@ -106,13 +109,35 @@ static void field_done(hdcap_demux *dx)
     }
     if (dx->line_double) {
         /* The decoder still alternates its field window: on a SNES the "fields" carry 239 and 240
-         * lines, top-aligned. Keep the output height constant (largest field seen) and fill the
-         * missing bottom line with black, so consumers see a fixed 720x480. */
+         * lines, top-aligned. Keep the output height constant and fill missing bottom lines with
+         * black, so consumers see a fixed 720x480. A source changing modes can also send a few
+         * odd fields (e.g. a missed vertical sync runs on to the end of the ADC's window): those
+         * are cropped or padded to the current height. The height follows a new field size only
+         * once it has held for LD_SETTLE_FIELDS fields in a row, so it can shrink as well as grow. */
+        int t = lines;
         int std_lines = lines > 264 ? 288 : 240;   /* 240p / 288p */
-        if (abs(lines - std_lines) <= 4 && std_lines > dx->ld_lines)
-            dx->ld_lines = std_lines;
-        if (lines > dx->ld_lines)
-            dx->ld_lines = lines;
+        if (abs(lines - std_lines) <= 4)
+            t = std_lines;
+        if (!dx->ld_lines) {
+            dx->ld_lines = t;
+        } else if (abs(t - dx->ld_lines) <= 2) {
+            if (t > dx->ld_lines)
+                dx->ld_lines = t;
+            dx->ld_cand_n = 0;
+        } else {
+            if (dx->ld_cand_n && abs(t - dx->ld_cand) <= 2) {
+                dx->ld_cand_n++;
+                if (t > dx->ld_cand)
+                    dx->ld_cand = t;
+            } else {
+                dx->ld_cand = t;
+                dx->ld_cand_n = 1;
+            }
+            if (dx->ld_cand_n >= LD_SETTLE_FIELDS) {
+                dx->ld_lines = dx->ld_cand;
+                dx->ld_cand_n = 0;
+            }
+        }
         for (int i = 0; i < dx->ld_lines; i++) {
             uint8_t *d0 = dx->frame + (size_t)(2 * i) * lb, *d1 = d0 + lb;
             if (i < lines) {

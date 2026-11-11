@@ -28,6 +28,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CEA 1
 
@@ -69,6 +70,47 @@ static const hdcap_mode modes[] = {
     { "1920x1080i60",           2200, 1920, 192, 1125, 540, 20,  74.250, 1, CEA },
     { "1920x1080p50",           2640, 1920, 192, 1125, 1080, 41, 148.500, 0, CEA },
     { "1920x1080p60",           2200, 1920, 192, 1125, 1080, 41, 148.500, 0, CEA },
+    /* 15 kHz progressive: 240p/288p from consoles, home computers and arcade boards, as RGB on VGA
+     * or YPbPr on Component. BT.601 sampling (13.5 MHz, 858/864 samples per line, 720 wide) with the
+     * horizontal placement of 480i/576i; the window holds exactly one field's 240/288 lines, so the
+     * line-doubled output is a constant 720x480/576 (4:3, like Composite/S-Video 240p). Sources run
+     * 262 or 263 (312 or 313) lines; matching allows for both. Appended at the end because OBS and
+     * hdcapd store a manually chosen mode as its index in this table.
+     * The windows are placed to hold the widest picture measured, not to centre narrower ones:
+     * cropping a source loses picture, an off-centre one only needs the offset to look tidy.
+     * Measured on a MiSTer FPGA, in samples from the leading edge of h-sync (13.5 MHz):
+     *   X68000, 256x256 mode (264 lines, 15.838 kHz)  112..834, lines 17..256   (723 x 240)
+     *   Genesis H40 (262 lines, 15.698 kHz)           168..811
+     *   Amiga NTSC hires (263 lines, 15.623 kHz)      185..807
+     * 240p: h-start 114 / v-start 17 puts the window at 113..832 and lines 17..256, so the X68000
+     * fits whole (480i's 119/18 cropped 6 samples and a line, 133 cropped 20 samples); the Genesis
+     * and Amiga then sit right of centre (margins about 55/22 and 72/26).
+     * 288p: 576i's h-start; a PAL Amiga (lores, 313 lines) fits with margins 55/37. */
+    { "720x240p (240p, 15 kHz)", 858,  720, 114, 262,  240, 17,  13.500, 0, CEA },
+    { "720x288p (288p, 15 kHz)", 864,  720, 132, 312,  288, 22,  13.500, 0, CEA },
+    /* Sharp X68000 768x512, 31 kHz, as the MiSTer FPGA core sends it: 568 lines at 34.08 kHz, 60 Hz
+     * (the original machine runs the same 1104 x 568 raster at 31.5 kHz, 55 Hz; not verified here).
+     * Measured live on a Human68k screen: at 1104 samples per line the picture is 768 samples wide
+     * (1096 gives 763, 1112 gives 774), starting 263 samples after h-sync and 41 lines after v-sync,
+     * 512 lines high. Needs the auto-phase to be stable: at phase 0, 1-pixel text flickered.
+     * The core's line is a fraction of a sample off 1104 (1103 and 1105 are far worse), so the best
+     * phase drifts slightly across the line: even at the best phase about 500 of 393,000 pixels of a
+     * static screen change between frames (against about 12,800 at phase 0). */
+    { "768x512@60 (X68000, MiSTer)", 1104, 768, 263, 568, 512, 41, 37.627, 0, 0 },
+    /* Sharp X68000 24 kHz mode, as the MiSTer core sends it: 481 lines at 28.86 kHz, 60 Hz. Found
+     * with the sharpness meter: scanning 800-1400 samples per line, the phase spread peaked sharply
+     * at 944 (7.6 %, neighbours under 3 %); at 944 a moving game (Marble Madness) changed 534
+     * pixels per frame, at the other peak, 1232, 6120. The picture starts 33 lines after v-sync and
+     * runs 448 lines; that game's playfield is 576 wide from sample 288. The visible width is up to
+     * the software, so the window is 640 wide from 256, centring 576 with room for wider screens. */
+    { "640x448@60 (X68000 24 kHz, MiSTer)", 944, 640, 256, 481, 448, 33, 27.245, 0, 0 },
+    /* Atari System 2 arcade (25 kHz medium resolution), measured on the MiSTer FPGA 720 Degrees
+     * core: 417 lines at 25.0 kHz, 59.94 Hz. At 880 samples per line the picture was 704 wide, 80 %
+     * of the line, so a 512-pixel line is 640 in all (16.0 MHz); at 640 a static text bar stayed
+     * unchanged at 7 of 8 phases, at 639 and 641 it flickered at most of them. 512x384 from 96/24,
+     * with equal margins either side when the window is widened. The attract mode moves too much
+     * for the sharpness-meter scan (about 96 % spread at every setting). */
+    { "512x384@60 (Atari System 2, MiSTer)", 640, 512, 96, 417, 384, 24, 15.997, 0, 0 },
 };
 
 const hdcap_mode *hdcap_modes(size_t *count)
@@ -106,6 +148,19 @@ const hdcap_mode *hdcap_find_mode(hdcap_input in, const hdcap_signal *s)
         }
     }
     return best;
+}
+
+int hdcap_wants_line_double(hdcap_input in, const hdcap_signal *s)
+{
+    if (s->interlaced)
+        return 0;
+    if (in == HDCAP_INPUT_COMPOSITE || in == HDCAP_INPUT_SVIDEO)
+        return 1;
+    /* 15 kHz progressive on the ADC: 262/263 lines (240p) or 312/313 (288p); allow for sources that
+     * add equalizing pulses to their sync. 31 kHz modes (480p, VGA) have 500+ lines and pass through. */
+    if (in == HDCAP_INPUT_VGA || in == HDCAP_INPUT_COMPONENT)
+        return s->vtotal > 0 && s->vtotal <= 320;
+    return 0;
 }
 
 static int mst_write(hdcap *dev, uint8_t reg, uint8_t val)
@@ -165,6 +220,199 @@ int hdcap_set_mode(hdcap *dev, hdcap_input in, const hdcap_mode *m, int hoffset,
         (r = mst_write(dev, 0x86, (uint8_t)m->vactive)) < 0)
         return r;
     return 0;
+}
+
+/* ---------- ADC sampling phase ----------
+ * Bank 0 0x04 bits 7:2 = ADC sampling phase (64 steps across one sample period). The MST3367 has a
+ * sharpness meter: 0xE0 = 0x80 starts it, 0x40 latches it, and 0xE9[1:0]:0xE8:0xE7:0xE6 is a 26-bit
+ * total that peaks when samples land in the middle of the source's pixels. 0x1E/0x1F are cleared
+ * while measuring and restored afterwards. Observed behaviour of the vendor driver's auto-phase,
+ * verified live: on a MiSTer X68000 at 768x512 (1104 samples per line) the meter peaked at phase 24,
+ * the same phase at which consecutive frames of a static screen stopped differing (14 changed
+ * pixels, against 12,800 at phase 0). */
+
+static int mst_read(hdcap *dev, uint8_t reg, uint8_t *val)
+{
+    int r = hdcap_i2c_write(dev, HDCAP_I2C_MST3367, 0x00, 0x00); /* bank 0 */
+    return r < 0 ? r : hdcap_i2c_read(dev, HDCAP_I2C_MST3367, reg, val);
+}
+
+int hdcap_set_phase(hdcap *dev, int phase)
+{
+    return mst_write(dev, 0x04, (uint8_t)((phase & 0x3F) << 2));
+}
+
+/* Phase measured at sweep step i: the coarse steps cover all 64 phases, the fine steps the 7 around
+ * the coarse winner (whose position the coarse grid only knows to within +-2). */
+static int sweep_phase(const hdcap_phase_sweep *sw, int i)
+{
+    static const int check_offset[HDCAP_PHASE_CHECK_STEPS] = { -HDCAP_PHASE_CHECK_SPAN, HDCAP_PHASE_CHECK_SPAN, 0 };
+    if (sw->check == 2)
+        return sw->res.phase;   /* level reading: the phase in use */
+    if (sw->check)
+        return (sw->res.phase + check_offset[i] + 64) & 63;
+    if (i < HDCAP_PHASE_STEPS)
+        return i * 64 / HDCAP_PHASE_STEPS;
+    if (i == HDCAP_PHASE_STEPS)
+        return 0;   /* the first coarse phase again: did the picture change during the pass? */
+    return (sw->res.coarse_phase + i - HDCAP_PHASE_STEPS - 1 - HDCAP_PHASE_FINE / 2 + 64) & 63;
+}
+
+/* Start measuring phase sw->step: set the phase and start the meter; it can be latched 50 ms later
+ * (at least one frame at any supported rate). */
+static int sweep_measure(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns)
+{
+    int r;
+    if ((r = hdcap_set_phase(dev, sweep_phase(sw, sw->step))) < 0 || (r = mst_write(dev, 0xE0, 0x80)) < 0)
+        return r;
+    sw->due_ns = now_ns + 50000000ULL;
+    return 0;
+}
+
+/* Restore the meter registers (also after an error) and end the sweep. */
+static int sweep_end(hdcap *dev, hdcap_phase_sweep *sw, int r)
+{
+    int r2 = mst_write(dev, 0xE0, 0);
+    if (r2 >= 0) r2 = mst_write(dev, 0x1E, sw->s1e);
+    if (r2 >= 0) r2 = mst_write(dev, 0x1F, sw->s1f);
+    sw->active = 0;
+    return r < 0 ? r : r2;
+}
+
+static int sweep_begin(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns)
+{
+    int r;
+    if ((r = mst_read(dev, 0x1E, &sw->s1e)) < 0 || (r = mst_read(dev, 0x1F, &sw->s1f)) < 0)
+        return r;
+    sw->active = 1;
+    if ((r = mst_write(dev, 0x1E, 0)) < 0 || (r = mst_write(dev, 0x1F, 0)) < 0 || (r = mst_write(dev, 0xE0, 0)) < 0 ||
+        (r = sweep_measure(dev, sw, now_ns)) < 0)
+        return sweep_end(dev, sw, r);
+    return 0;
+}
+
+int hdcap_phase_sweep_start(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns)
+{
+    memset(sw, 0, sizeof *sw);
+    return sweep_begin(dev, sw, now_ns);
+}
+
+int hdcap_phase_sweep_abort(hdcap *dev, hdcap_phase_sweep *sw)
+{
+    return sw->active ? sweep_end(dev, sw, 0) : 0;
+}
+
+int hdcap_phase_check_start(hdcap *dev, hdcap_phase_sweep *sw, int phase, uint64_t now_ns)
+{
+    memset(sw, 0, sizeof *sw);
+    sw->check = 1;
+    sw->res.phase = phase & 63;
+    return sweep_begin(dev, sw, now_ns);
+}
+
+int hdcap_phase_level_start(hdcap *dev, hdcap_phase_sweep *sw, int phase, uint64_t now_ns)
+{
+    memset(sw, 0, sizeof *sw);
+    sw->check = 2;
+    sw->res.phase = phase & 63;
+    return sweep_begin(dev, sw, now_ns);
+}
+
+int hdcap_phase_sweep_poll(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns)
+{
+    uint8_t b[4];
+    int r;
+    if (!sw->active)
+        return 1;
+    if (now_ns < sw->due_ns)
+        return 0;
+    if ((r = mst_write(dev, 0xE0, 0x40)) < 0 || (r = mst_read(dev, 0xE6, &b[0])) < 0 || (r = mst_read(dev, 0xE7, &b[1])) < 0 ||
+        (r = mst_read(dev, 0xE8, &b[2])) < 0 || (r = mst_read(dev, 0xE9, &b[3])) < 0)
+        return sweep_end(dev, sw, r);
+    uint32_t v = ((uint32_t)(b[3] & 3) << 24) | ((uint32_t)b[2] << 16) | ((uint32_t)b[1] << 8) | b[0];
+    if (sw->check == 2) {
+        /* level reading: one measurement at the phase in use, which never changed */
+        sw->res.fine[2] = v;
+        sw->res.check_ok = 1;
+        return (r = sweep_end(dev, sw, 0)) < 0 ? r : 1;
+    }
+    if (sw->check) {
+        /* neighbours first, the current phase last, so the picture ends where it started */
+        sw->res.fine[sw->step++] = v;
+        if (sw->step < HDCAP_PHASE_CHECK_STEPS)
+            return (r = sweep_measure(dev, sw, now_ns)) < 0 ? sweep_end(dev, sw, r) : 0;
+        if ((r = sweep_end(dev, sw, 0)) < 0)
+            return r;
+        uint32_t side = sw->res.fine[0] > sw->res.fine[1] ? sw->res.fine[0] : sw->res.fine[1];
+        sw->res.check_ok = (uint64_t)side * 1000 <= (uint64_t)sw->res.fine[2] * (1000 + HDCAP_PHASE_CHECK_MARGIN);
+        return (r = hdcap_set_phase(dev, sw->res.phase)) < 0 ? r : 1;
+    }
+    if (sw->step < HDCAP_PHASE_STEPS)
+        sw->res.value[sw->step] = v;
+    else if (sw->step == HDCAP_PHASE_STEPS)
+        sw->res.repeat = v;
+    else
+        sw->res.fine[sw->step - HDCAP_PHASE_STEPS - 1] = v;
+    sw->step++;
+    if (sw->step == HDCAP_PHASE_STEPS + 1) {
+        /* coarse pass done: refine around its peak, unless there was none, or the picture changed
+         * while it ran (a screen still being drawn makes later phases read higher, a false peak) */
+        hdcap_phase_choose(&sw->res);
+        uint32_t a = sw->res.value[0], b = sw->res.repeat, d = a > b ? a - b : b - a;
+        if (sw->res.found && (uint64_t)d * 1000 > (uint64_t)(a > b ? a : b) * HDCAP_PHASE_MAX_DRIFT) {
+            sw->res.found = 0;
+            sw->res.unsteady = 1;
+            sw->res.phase = 0;
+        }
+        sw->res.coarse_phase = sw->res.phase;
+        if (!sw->res.found)
+            sw->step = HDCAP_PHASE_STEPS + 1 + HDCAP_PHASE_FINE;
+    }
+    if (sw->step < HDCAP_PHASE_STEPS + 1 + HDCAP_PHASE_FINE)
+        return (r = sweep_measure(dev, sw, now_ns)) < 0 ? sweep_end(dev, sw, r) : 0;
+    if ((r = sweep_end(dev, sw, 0)) < 0)
+        return r;
+    if (sw->res.found) {
+        int best = 0;
+        for (int i = 1; i < HDCAP_PHASE_FINE; i++)
+            if (sw->res.fine[i] > sw->res.fine[best])
+                best = i;
+        sw->res.phase = sweep_phase(sw, HDCAP_PHASE_STEPS + 1 + best);
+    }
+    return (r = hdcap_set_phase(dev, sw->res.phase)) < 0 ? r : 1;
+}
+
+int hdcap_auto_phase(hdcap *dev, hdcap_phase_result *res)
+{
+    hdcap_phase_sweep sw;
+    int r;
+    if ((r = hdcap_phase_sweep_start(dev, &sw, hdcap_now_ns())) < 0)
+        return r;
+    do {
+        struct timespec ts = { 0, 5 * 1000000L };
+        nanosleep(&ts, NULL);
+    } while ((r = hdcap_phase_sweep_poll(dev, &sw, hdcap_now_ns())) == 0);
+    if (r < 0)
+        return r;
+    *res = sw.res;
+    return 0;
+}
+
+void hdcap_phase_choose(hdcap_phase_result *res)
+{
+    int best = 0;
+    res->best = res->worst = res->value[0];
+    for (int i = 1; i < HDCAP_PHASE_STEPS; i++) {
+        if (res->value[i] > res->best) {
+            res->best = res->value[i];
+            best = i;
+        }
+        if (res->value[i] < res->worst)
+            res->worst = res->value[i];
+    }
+    /* A flat picture (no detail, or no signal) gives no peak: keep phase 0 rather than noise. */
+    res->found = res->best > 0 && (uint64_t)(res->best - res->worst) * 1000 >= (uint64_t)res->best * HDCAP_PHASE_MIN_SPREAD;
+    res->phase = res->found ? best * 64 / HDCAP_PHASE_STEPS : 0;
 }
 
 double hdcap_estimate_rate(hdcap_input in, const hdcap_signal *s, const hdcap_mode *analog_mode)

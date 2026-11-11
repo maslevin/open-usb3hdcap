@@ -20,6 +20,10 @@ for ARCH in arm64 x86_64; do
   rm -rf "src-$ARCH" && mkdir "src-$ARCH" && tar -xjf "libusb-$VER.tar.bz2" -C "src-$ARCH" --strip-components 1
   HOST=$([ $ARCH = arm64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)
   (cd "src-$ARCH" &&
+   # pipe2() is new in macOS 27. With a macOS 27+ SDK, configure's link test finds it and libusb
+   # weak-links it, so on older macOS the call goes to address 0 and crashes in usbi_create_event.
+   # Force the pipe() + fcntl(FD_CLOEXEC) fallback, which works on every supported macOS.
+   ac_cv_func_pipe2=no \
    CFLAGS="-arch $ARCH -O2 -mmacosx-version-min=$MINOS" LDFLAGS="-arch $ARCH -mmacosx-version-min=$MINOS" \
    ./configure --host=$HOST --prefix="$WORK/inst-$ARCH" --enable-static --enable-shared --disable-examples-build --disable-tests-build >/dev/null &&
    make -j8 >/dev/null && make install >/dev/null)

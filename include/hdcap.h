@@ -156,10 +156,72 @@ typedef struct {
 const hdcap_mode *hdcap_modes(size_t *count);
 /* Best standard mode for a locked analog signal, or NULL. */
 const hdcap_mode *hdcap_find_mode(hdcap_input in, const hdcap_signal *s);
+/* True for progressive sources with at most ~320 lines per frame (240p/288p) on the analog inputs
+ * (Composite, S-Video, VGA, Component): their frames are line-doubled so they keep a 4:3 shape. */
+int hdcap_wants_line_double(hdcap_input in, const hdcap_signal *s);
 /* Program the MST3367 for an analog mode on VGA or Component: the ADC front end for the mode's
  * pixel clock (PLL gain, clamp timing, sync width), the sampling PLL (h-total), and the crop window
  * on the active area shifted by the given offsets (samples / lines). */
 int hdcap_set_mode(hdcap *dev, hdcap_input in, const hdcap_mode *m, int hoffset, int voffset);
+
+/* ADC sampling phase (VGA/Component): 0..63 across one sample period. hdcap_auto_phase() measures
+ * the MST3367's sharpness meter at HDCAP_PHASE_STEPS phases, then at HDCAP_PHASE_FINE phases around
+ * the best (about 50 ms each, so about 1.25 s in all), and sets the sharpest. When the picture has
+ * too little detail to tell phases apart (the spread between best and worst is under
+ * HDCAP_PHASE_MIN_SPREAD tenths of a percent) it sets phase 0 and reports found = 0. Call it after
+ * hdcap_set_mode(), with the source showing a picture. */
+#define HDCAP_PHASE_STEPS      16
+#define HDCAP_PHASE_FINE       7   /* then every phase from the coarse peak - 3 to + 3 */
+#define HDCAP_PHASE_MIN_SPREAD 10
+/* After the coarse pass the first phase is measured again; if the reading moved by more than
+ * HDCAP_PHASE_MAX_DRIFT tenths of a percent the picture changed during the sweep (e.g. a screen
+ * still being drawn), its peak is not trusted: found = 0, unsteady = 1. A steady picture repeats
+ * within about 0.3 %. */
+#define HDCAP_PHASE_MAX_DRIFT  20
+typedef struct {
+    int      phase;                          /* the phase set */
+    int      found;                          /* 1 = a sharpness peak was found */
+    int      coarse_phase;                   /* the coarse pass's peak */
+    uint32_t best, worst;                    /* meter range over the coarse pass */
+    uint32_t value[HDCAP_PHASE_STEPS];       /* meter at phase i * 64 / HDCAP_PHASE_STEPS */
+    uint32_t fine[HDCAP_PHASE_FINE];         /* meter at coarse_phase - 3 + i (when found); for a
+                                              * check: at phase - span, phase + span, phase */
+    int      check_ok;                       /* check: no neighbour beats the phase (it is a peak) */
+    uint32_t repeat;                         /* meter at value[0]'s phase, measured again after the pass */
+    int      unsteady;                       /* the picture changed during the sweep: no result */
+} hdcap_phase_result;
+int hdcap_auto_phase(hdcap *dev, hdcap_phase_result *res);
+/* The decision part of hdcap_auto_phase(): from res->value, fill in phase, found, best, worst. */
+void hdcap_phase_choose(hdcap_phase_result *res);
+/* The same sweep without blocking, for use while streaming: start it, then call poll with the
+ * current time (any clock in ns) from the streaming loop. Poll returns 0 while measuring, 1 when
+ * done (sw->res filled in and the phase set), or a negative error; the meter registers are
+ * restored either way. While it runs the picture's sampling phase steps through all values. */
+typedef struct {
+    hdcap_phase_result res;
+    int      active, step, check;   /* check: 0 sweep, 1 neighbour check, 2 level reading */
+    uint8_t  s1e, s1f;
+    uint64_t due_ns;
+} hdcap_phase_sweep;
+int hdcap_phase_sweep_start(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns);
+int hdcap_phase_sweep_poll(hdcap *dev, hdcap_phase_sweep *sw, uint64_t now_ns);
+/* A quick check that a phase is still the sharpest, polled the same way: measures phase - span and
+ * phase + span, then phase itself, and leaves the phase set. res.check_ok = 0 when a neighbour reads
+ * more than HDCAP_PHASE_CHECK_MARGIN tenths of a percent sharper: the phase is off its peak (for
+ * example it was measured while the source showed a boot screen) and a full sweep is due. */
+#define HDCAP_PHASE_CHECK_STEPS  3
+#define HDCAP_PHASE_CHECK_SPAN   4
+#define HDCAP_PHASE_CHECK_MARGIN 5
+int hdcap_phase_check_start(hdcap *dev, hdcap_phase_sweep *sw, int phase, uint64_t now_ns);
+/* A level reading, polled the same way: one meter measurement at the phase in use (res.fine[2]),
+ * without changing it. It does not disturb the picture (verified: no frame changed while the meter
+ * ran and while 0x1E/0x1F were cleared), so frames need not be held. Tells how much detail the
+ * picture has now, compared with the picture a phase was found on. */
+int hdcap_phase_level_start(hdcap *dev, hdcap_phase_sweep *sw, int phase, uint64_t now_ns);
+/* Stop a sweep or check early (e.g. the stream is stopping): restores the meter registers and
+ * leaves the phase wherever it was. */
+int hdcap_phase_sweep_abort(hdcap *dev, hdcap_phase_sweep *sw);
+int hdcap_set_phase(hdcap *dev, int phase);
 
 /* ADC front-end settings the driver uses for a pixel clock (exposed for tests and tools). */
 typedef struct {
@@ -189,8 +251,13 @@ typedef struct hdcap_demux hdcap_demux;
 
 hdcap_demux *hdcap_demux_new(hdcap_frame_cb on_frame, hdcap_audio_cb on_audio, void *user);
 void hdcap_demux_free(hdcap_demux *dx);
-/* Progressive SD sources (240p/288p consoles on Composite/S-Video): emit every field as its own
- * frame with each line doubled (720x480/576, correct shape), instead of weaving field pairs. */
+/* Progressive SD sources (240p/288p consoles on Composite/S-Video, 15 kHz RGB on VGA, 240p on
+ * Component): emit every field as its own frame with each line doubled, instead of weaving field
+ * pairs. The width is the capture window's; the height is twice the field's active lines:
+ * 720x480/576 from the TW9900 and from the MST3367's 15 kHz modes, other sizes when a different
+ * window is in use (e.g. 720x496 with the default VGA window and no 15 kHz mode). The height
+ * holds through a few odd fields and follows a new field size once it has held for 30 fields
+ * (0.5 s at 60 Hz, 0.6 s at 50 Hz). */
 void hdcap_demux_set_line_double(hdcap_demux *dx, int on);
 /* Feed raw isochronous payload bytes (any chunking). */
 void hdcap_demux_feed(hdcap_demux *dx, const uint8_t *data, size_t len);

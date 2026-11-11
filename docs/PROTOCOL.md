@@ -235,6 +235,57 @@ Captured component 480i (h-start 118 = 62+57−1, v-start 18 = 3+15, height 240 
 the CEA-861 timing exactly. Sega Dreamcast VGA uses 640 active pixels on an 858-sample, 27 MHz line:
 same line rate and line count as VESA 640×480@60, so it needs a manual choice.
 
+### MST3367 sampling phase and sharpness meter (verified live, 2026-11-09)
+Observed behaviour of the vendor driver's auto-phase (its `MST3367_ADC_AUTO_PHASE` routine), checked
+on a MiSTer FPGA X68000 core:
+- Bank 0 **0x04 bits 7:2** = ADC sampling phase, 64 steps across one sample period (0x04 = phase << 2).
+- **Sharpness meter:** 0xE0 = 0x80 starts it, 0x40 latches it, and **0xE9[1:0]:0xE8:0xE7:0xE6** is a
+  26-bit total that is highest when the samples land in the middle of the source's pixels. 0x1E and
+  0x1F are cleared while measuring and restored afterwards; 0xE0 is cleared at the end. The vendor
+  driver waits 50 ms per phase and tries 16 phases (0, 4 … 60).
+- Verified: X68000 768x512 at 1104 samples per line. Frame-to-frame changes of a static Human68k
+  screen by phase: 12,800 pixels at phase 0, 14 at 24, 14,400 at 56; the meter peaked at 24 too.
+  Measuring right after a PLL divider change gave the same peak as after 300 ms (no settling needed).
+- libhdcap: 16 coarse phases, then the 7 around the coarse peak (the X68000's best phase moved
+  from 24 to 25-26 between boots, between coarse steps); a spread under 1 % between best and worst
+  means "no detail to measure" and leaves phase 0.
+- **Finding a mode's samples per line with the meter:** for each candidate PLL divider, sweep a few
+  phases. When the divider matches the source's pixels per line, phase matters a lot (the
+  best-to-worst spread jumps: X68000 24 kHz 7.6 % at 944, under 3 % at the neighbours); otherwise it
+  averages out across the line (about 1 %). Peak sharpness alone is not distinctive.
+- The X68000 core's 768x512 line is a fraction of a sample off 1104 (1103 and 1105 give 9,000-12,000
+  changed pixels): its best phase drifts across the line, leaving about 500 of 393,000 pixels
+  unsteady even at the best phase. **0x02 bit 3** (undocumented; vendor tables leave it clear)
+  seemed to remove that, 540 to 0-3 changed pixels in several runs, but after the MiSTer was
+  rebooted it made no difference (522 vs 472), so libhdcap leaves it clear.
+- What is on screen matters: right after a core switch the X68000 boot screen (meter about 44,000
+  against 308,000 for Human68k) peaked at phase 49-54. libhdcap therefore remembers each mode's
+  phase, re-checks phase-locked modes 3 and 10 s after a start (neighbours +-4 first, a full sweep
+  only if one is more than 0.5 % sharper), and ignores a re-check on a picture with less than half
+  the detail the phase was found on. Frames are held back while the phase is being changed.
+- Reading the meter at the phase in use does not disturb the picture: 480 consecutive frames of a
+  static screen were unchanged while the meter ran and while 0x1E/0x1F were cleared for a second
+  (with them cleared the meter reads about 3 % higher). libhdcap uses such readings, every 2 s for
+  two minutes after a start, to re-measure when the picture gains detail (1.5 times the level the
+  phase was found on): a fresh X68000 core showed its boot screen past the 10 s check.
+- The meter only suits sampling at the source's pixel clock. In the 240p mode (13.5 MHz, an Amiga
+  hires pixel is slightly under one sample) it peaked at phase 9, where a static Workbench changed
+  1,192 pixels per frame, against 470-850 at the other phases (594 at the table's phase 0). So
+  libhdcap measures the phase only for family-0 modes (PC/VESA, X68000) and leaves broadcast-rate
+  modes at the input tables' phase.
+
+| X68000 mode (MiSTer core) | Lines, line rate | libhdcap mode | Samples per line, window |
+|---|---|---|---|
+| 768x512, 512x512, 384x512 (31 kHz) | 568, 34.07-34.08 kHz, 60 Hz | 768x512@60 (X68000, MiSTer) | 1104 (512 mode: 1:1 with black borders sent by the core; 384: 2:1); 768x512 from 263/41 |
+| 24 kHz | 481, 28.86 kHz, 60 Hz | 640x448@60 (X68000 24 kHz, MiSTer) | 944; 640x448 from 256/33 (Marble Madness: 576 wide from 288) |
+| 256x256 (15 kHz) | 264, 15.84 kHz, 60 Hz | 720x240p (240p, 15 kHz) | 858 (13.5 MHz); the picture is 723 samples wide, 112-834 |
+
+Atari System 2 (MiSTer 720 Degrees core): 417 lines at 24.996 kHz, 59.94 Hz. Its attract mode moves
+too much for the meter scan (about 96 % spread at every divider), so the samples per line came from
+the picture: at 880 it was 704 samples wide (80 % of the line), so a 512-pixel line is 640 in all.
+At 640 a static text bar stayed unchanged at 7 of 8 phases (639 and 641 flickered at most), and the
+picture is exactly 512x384 from 96/24. libhdcap mode "512x384@60 (Atari System 2, MiSTer)".
+
 ### Digital inputs: InfoFrame, colour matrix, audio source (verified live, 2026-10-18)
 - **DVI-D** = HDMI setup with MST3367 0x51 = 0x89 (second TMDS port) and CPLD 0x01 = 0x01.
 - **MST3367 bank 2 0x48–0x4B = AVI InfoFrame PB1–PB4.**
@@ -280,6 +331,22 @@ same line rate and line count as VESA 640×480@60, so it needs a manual choice.
   60 fps. The decoder still alternates its field window on 240p (239 and 240 active lines,
   top-aligned, content in the same place), so the demuxer pads to a constant 240 (288) lines per
   field.
+- **Progressive 15 kHz sources on the MST3367 (VGA, Component).** The same line doubling applies
+  when the MST3367 reports a progressive signal with at most 320 lines per frame (bank 0 0x5B/0x5C:
+  262/263 for 240p, 312/313 for 288p; 0x5F bit 1 clear). libhdcap's modes "720x240p (240p,
+  15 kHz)" and "720x288p (288p, 15 kHz)" sample at 13.5 MHz (PLL divider for 858/864 samples per
+  line, as 480i/576i) with a 720 x 240/288 window, so the output is a constant 720x480/576.
+  Window position (sync + back porch / first line): 240p 114/17, 288p 132/22. The windows hold the
+  widest picture measured rather than centring narrower ones (a cropped picture loses content, an
+  off-centre one only needs the offset). Measured on a MiSTer FPGA (`vga_scaler=0`,
+  `forced_scandoubler=0`), in samples from h-sync: X68000 256x256 112-834 (lines 17-256), Genesis
+  H40 168-811, Amiga NTSC hires 185-807; a PAL Amiga (lores) fits the 288p window with margins of
+  55/37. With 480i's 119/18 the X68000 lost 6 samples and a line; tuned to centre the Genesis and
+  Amiga (133) it lost 20. The PAL Amiga's vertical position differed by one line between sessions.
+  Without these modes the default VGA window (480 lines high) applied and a field ended at vertical
+  sync (263 lines gave 248 active lines, 720x496 doubled); a field that missed vertical sync while
+  the source switched modes ran on to 298 or 480 lines. The demuxer therefore crops or pads odd
+  fields to the current height and only adopts a new field size after it has held for 30 fields.
 - **Picture controls** (datasheet): 0x10 brightness (signed), 0x11 contrast (%, 0x64 = 100%), 0x12
   bits 3:0 sharpness (upper bits 0x50 kept), 0x13/0x14 U/V gain (0x80 = 100%), 0x15 hue (signed,
   NTSC only). The Windows defaults, BRIGHT 0xF7, CONTRAST 0x79, SAT 0x80, HUE 0x00, SHARPNESS 0x52, are

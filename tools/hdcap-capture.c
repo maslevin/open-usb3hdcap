@@ -115,7 +115,12 @@ static void usage(void)
             "usage: hdcap-capture [-s seqfile]... [-t seconds] [-n frames] [-o outdir] [-v]\n"
             "  -i INPUT  init and select input: hdmi, dvi, vga, component, composite, s-video\n"
             "  -m NAME   analog mode override (substring of a mode name, e.g. \"27 MHz\", \"800x600@60\")\n"
+            "  -T HT,HA,HS,VA,VS  analog custom timing (overrides -m): samples per line, window width,\n"
+            "            window start (sync + back porch), window height (lines per frame), first line;\n"
+            "            the pixel clock follows from the measured line rate. For finding a new mode's values\n"
             "  -H N, -V N  analog window offset in samples / lines\n"
+            "  -p N      analog ADC sampling phase 0..63 (default: automatic from the chip's sharpness meter\n"
+            "            for modes sampled at the source's pixel clock, the input table's for broadcast-rate modes)\n"
             "  -S STD    TV standard for composite/S-Video: Auto (default), NTSC-M, PAL, SECAM, NTSC-4.43, PAL-M, PAL-CN, PAL-60\n"
             "  -P B,C,S,H,SH  composite/S-Video picture: brightness, contrast %%, saturation (128 = 100%%), hue, sharpness\n"
             "  -s FILE   run sequence file before streaming (repeatable, in order)\n"
@@ -132,13 +137,15 @@ int main(int argc, char **argv)
     int nseq = 0, verbose = 0, max_delay = -1, input = -1, hoff = 0, voff = 0;
     double rate = 1.0;
     const char *mode_name = NULL;
+    int custom[5], have_custom = 0, phase = -1;
+    hdcap_mode custom_mode;
     int tv_std = HDCAP_STD_AUTO;
     hdcap_picture pic = HDCAP_PICTURE_DEFAULTS;
     int pic_set = 0;
     double seconds = 5;
     ctx_t c = { .outdir = "capture-out", .want_frames = 3 };
     int opt;
-    while ((opt = getopt(argc, argv, "s:i:m:H:V:S:P:t:n:o:D:vh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:i:m:T:H:V:p:S:P:t:n:o:D:vh")) != -1) {
         switch (opt) {
         case 's': if (nseq < 16) seqs[nseq++] = optarg; break;
         case 't': seconds = atof(optarg); break;
@@ -147,6 +154,15 @@ int main(int argc, char **argv)
         case 'v': verbose++; break;
         case 'D': max_delay = atoi(optarg); break;
         case 'm': mode_name = optarg; break;
+        case 'T':
+            if (sscanf(optarg, "%d,%d,%d,%d,%d", &custom[0], &custom[1], &custom[2], &custom[3], &custom[4]) != 5 ||
+                custom[0] < 64 || custom[0] > 4096 || custom[1] < 16 || custom[1] > 4095 || custom[2] < 1 ||
+                custom[3] < 16 || custom[3] > 4095 || custom[4] < 0 || custom[4] > 255) {
+                usage();
+                return 2;
+            }
+            have_custom = 1;
+            break;
         case 'P':
             if (sscanf(optarg, "%d,%d,%d,%d,%d", &pic.brightness, &pic.contrast, &pic.saturation, &pic.hue,
                        &pic.sharpness) != 5) { usage(); return 2; }
@@ -156,6 +172,10 @@ int main(int argc, char **argv)
             for (int k = 0; k <= HDCAP_STD_AUTO; k++)
                 if (!strcasecmp(optarg, hdcap_std_name(k)))
                     tv_std = k;
+            break;
+        case 'p':
+            phase = atoi(optarg);
+            if (phase < 0 || phase > 63) { usage(); return 2; }
             break;
         case 'H': hoff = atoi(optarg); break;
         case 'V': voff = atoi(optarg); break;
@@ -236,7 +256,15 @@ int main(int argc, char **argv)
             const hdcap_mode *m = NULL;
             size_t nm;
             const hdcap_mode *all = hdcap_modes(&nm);
-            if (mode_name) {
+            if (have_custom && r == 1) {
+                custom_mode = (hdcap_mode){ "custom (-T)", custom[0], custom[1], custom[2], sig.vtotal, custom[3], custom[4],
+                                            custom[0] * sig.hfreq_hz / 1e6, sig.interlaced, 0 };
+                m = &custom_mode;
+                fprintf(stderr, "custom timing: %d samples per line at %.3f kHz = %.2f MHz\n", custom[0], sig.hfreq_hz / 1000,
+                        custom_mode.pclk_mhz);
+            } else if (have_custom) {
+                fprintf(stderr, "custom timing needs a locked signal\n");
+            } else if (mode_name) {
                 for (size_t k = 0; k < nm && !m; k++)
                     if (strstr(all[k].name, mode_name))
                         m = &all[k];
@@ -249,8 +277,34 @@ int main(int argc, char **argv)
             if (m) {
                 fprintf(stderr, "mode: %s (h-total %d, active %dx%d%s, window start %d/%d, offset %+d/%+d)\n", m->name,
                         m->htotal, m->hactive, m->vactive, m->interlaced ? " per field" : "", m->hstart, m->vstart, hoff, voff);
-                if ((r = hdcap_set_mode(dev, input, m, hoff, voff)) < 0)
+                if ((r = hdcap_set_mode(dev, input, m, hoff, voff)) < 0) {
                     fprintf(stderr, "set mode: %s\n", hdcap_strerror(r));
+                } else if (phase >= 0) {
+                    if ((r = hdcap_set_phase(dev, phase)) < 0)
+                        fprintf(stderr, "set phase: %s\n", hdcap_strerror(r));
+                    else
+                        fprintf(stderr, "ADC phase %d (forced)\n", phase);
+                } else if (m->family != 0) {
+                    /* as the session: broadcast-rate modes keep the input table's phase */
+                    fprintf(stderr, "ADC phase: input table's (broadcast-rate mode; -p to force one)\n");
+                } else {
+                    hdcap_phase_result ph;
+                    if ((r = hdcap_auto_phase(dev, &ph)) < 0) {
+                        fprintf(stderr, "auto-phase: %s\n", hdcap_strerror(r));
+                    } else {
+                        fprintf(stderr, "ADC phase %d (%s; coarse peak %d; meter", ph.phase,
+                                ph.found ? "auto" : ph.unsteady ? "picture changed while measuring, default" : "picture too flat, default",
+                                ph.coarse_phase);
+                        for (int k = 0; k < HDCAP_PHASE_STEPS; k++)
+                            fprintf(stderr, " %u", ph.value[k]);
+                        if (ph.found) {
+                            fprintf(stderr, "; fine");
+                            for (int k = 0; k < HDCAP_PHASE_FINE; k++)
+                                fprintf(stderr, " %u", ph.fine[k]);
+                        }
+                        fprintf(stderr, ")\n");
+                    }
+                }
             } else {
                 fprintf(stderr, "mode: none matched; keeping the input table's default sampling\n");
             }
@@ -280,9 +334,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "HDCP-protected source (receiver status %02x/%02x): capture blocked\n", hraw[0], hraw[1]);
     }
     hdcap_demux *dx = hdcap_demux_new(on_frame, on_audio, &c);
-    if (dx && (input == HDCAP_INPUT_COMPOSITE || input == HDCAP_INPUT_SVIDEO) && have_sig && !sig.interlaced) {
+    if (dx && have_sig && hdcap_wants_line_double(input, &sig)) {
         hdcap_demux_set_line_double(dx, 1);
-        fprintf(stderr, "progressive SD source: line doubling\n");
+        fprintf(stderr, "progressive SD source (%d lines): line doubling\n", sig.vtotal);
     }
     fprintf(stderr, "expected stream rate: %.1f MB/s\n", rate / 1e6);
     if (!dx || (r = hdcap_stream_start_rate(dev, dx, rate)) < 0) {
