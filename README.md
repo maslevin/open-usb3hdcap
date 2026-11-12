@@ -16,14 +16,14 @@ Requirements: macOS 13 or later (Intel or Apple Silicon universal binaries), and
 cable. On USB 2.0 only Composite and S-Video fit.
 
 ## Install
-From the [Releases](https://github.com/maslevin/open-usb3hdcap/releases) page (current version: **0.3.1**):
-- **USB3HDCAP-0.3.1.pkg**: camera, audio input and the background service. Double-click it,
+From the [Releases](https://github.com/maslevin/open-usb3hdcap/releases) page (current version: **0.4.0**):
+- **USB3HDCAP-0.4.0.pkg**: camera, audio input and the background service. Double-click it,
   accept the notice, then open **USB3HDCAP** from Applications and click **Install Camera**. Approve
   it in System Settings → General → Login Items & Extensions. The app also picks the input and the
   deinterlacing mode. **After updating**, open the app and click **Install Camera** again: macOS keeps
   running the previous camera extension until the app asks it to replace it. To remove: in the app, click **Remove Camera**, then run
   `sudo "/Library/Application Support/open-usb3hdcap/uninstall.sh"`.
-- **usb3hdcap-obs-0.3.1-macos-universal.zip**: the OBS plugin. Unzip it, quit OBS and run
+- **usb3hdcap-obs-0.4.0-macos-universal.zip**: the OBS plugin. Unzip it, quit OBS and run
   `./install.sh` (see `INSTALL.md` inside).
 
 Both are signed with a Developer ID and notarized by Apple. Use one at a time: the camera/audio
@@ -141,6 +141,15 @@ credited in [docs/PROTOCOL.md](docs/PROTOCOL.md):
 - [mlaux/usb3hdcap](https://github.com/mlaux/usb3hdcap) (same card)
 
 No code was copied from either.
+
+## Contributors
+Thank you to everyone who has improved the driver:
+- **Matthew Demicco** ([@Armitage64](https://github.com/Armitage64)): 15 kHz RGB (240p/288p) on VGA and
+  Component with line doubling, the Sharp X68000 and Atari System 2 modes, automatic ADC sampling phase,
+  `hdcap-capture -p`/`-T`, and the libusb `pipe2` fix for older macOS
+  ([#3](https://github.com/maslevin/open-usb3hdcap/pull/3)).
+
+Contributions are welcome: open a pull request, or a **Test report** issue for results on your hardware.
 
 ## License
 Copyright (C) 2026 Matt Slevinsky.
